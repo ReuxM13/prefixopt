@@ -51,3 +51,6 @@ pip install -e .
 
 ## Лицензия
 Этот проект распространяется под лицензией *MIT License*. См. файл `LICENSE` для подробностей.
+
+## Тесты
+![Tests](https://github.com/ReuxM13/prefixopt/actions/workflows/tests.yml/badge.svg)

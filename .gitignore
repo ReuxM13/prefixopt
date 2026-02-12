@@ -26,7 +26,6 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
-tests/
 
 .idea/
 .vscode/
