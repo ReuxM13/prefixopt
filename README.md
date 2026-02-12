@@ -60,6 +60,8 @@ The architecture is built on a modular principle (Core / CLI / Data).
 - [ ] Refactor package structure to allow clean imports (e.g., `import prefixopt`).
 - [ ] Expose core functions (`optimize`, `filter`, `subtract`) as a stable public API.
 - [ ] Add type stubs and documentation for library usage.
+- [ ] Implement colorized output for IPv4 (e.g., green) and IPv6 (e.g., purple, mask is gray) addresses when printing to stdout using `Rich`.
+- [ ] Tree View for `check`. Visualize prefix hierarchy. Instead of a flat list, display how the target IP/subnet fits into supernets using a graphical tree structure (`rich.tree`).
 
 ---
 
