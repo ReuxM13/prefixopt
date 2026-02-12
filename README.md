@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="banner.png" alt="prefixOptimizer Banner" width="100%">
+</p>
+
 [🇷🇺 Читать на русском](README_RU.md)
 # prefixopt
 
@@ -48,6 +52,14 @@ The architecture is built on a modular principle (Core / CLI / Data).
 - Memory Overhead: The utility is written in pure Python. Due to overhead on ipaddress objects, processing lists larger than 8-10 million lines may require significant RAM (starting from 8-10GB).
 - JSON: JSON parsing is not streaming - the file is loaded into memory entirely.
 - Big Data: The tool is not designed for real-time big data processing. It is a utility for configurations and access lists, not for traffic analytics.
+
+---
+
+## To-Do
+
+- [ ] Refactor package structure to allow clean imports (e.g., `import prefixopt`).
+- [ ] Expose core functions (`optimize`, `filter`, `subtract`) as a stable public API.
+- [ ] Add type stubs and documentation for library usage.
 
 ---
 
