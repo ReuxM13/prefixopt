@@ -39,6 +39,12 @@ source venv/bin/activate # Linux
 pip install -e .
 ```
 
+## Usage
+
+<p align="center">
+  <img src="Using.png" alt="prefixopt using" width="100%">
+</p>
+
 ---
 
 ## Technical Implementation
