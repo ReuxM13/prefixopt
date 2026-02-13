@@ -12,6 +12,9 @@ from .sorter import sort_networks
 from .nested import remove_nested
 from .aggregator import aggregate
 
+# Лимит на количество фрагментов. 
+# Если в результате вычитания получается больше 2 млн сетей - останавливаемся.
+MAX_OUTPUT_FRAGMENTS = 2_000_000
 
 def subtract_networks(
     sources: Iterable[IPNet],
@@ -90,5 +93,13 @@ def subtract_networks(
                 break
 
         final_results.extend(current_fragments)
+        
+        # Проверка размера результирующего списка
+        if len(final_results) > MAX_OUTPUT_FRAGMENTS:
+            raise ValueError(
+                f"Subtraction resulted in too many fragments (> {MAX_OUTPUT_FRAGMENTS}). "
+                "Operation stopped to prevent Memory Overflow. "
+                "Try optimizing your input lists or excluding larger blocks."
+            )
 
     return final_results
