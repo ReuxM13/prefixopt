@@ -8,7 +8,7 @@
 import sys
 import ipaddress
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Generator
 
 import typer
 
@@ -17,6 +17,7 @@ from .common import OutputFormat, handle_output, console
 from ..data.file_reader import read_networks, read_prefixes_with_comments
 from ..core.pipeline import process_prefixes
 from ..core.operations.sorter import sort_networks
+from ..core.ip_utils import IPNet
 
 
 def merge(
@@ -41,8 +42,7 @@ def merge(
        - Агрегация и удаление вложенных сетей ОТКЛЮЧАЮТСЯ (чтобы не потерять
          привязку комментария к конкретной подсети).
        - Выполняется дедупликация (удаление полных дублей IP).
-       - Используется потоковая обработка для экономии памяти (данные льются
-         напрямую в словарь дедупликации, минуя создание промежуточных списков).
+       - Используется потоковая обработка для экономии памяти.
 
     Args:
         file1: Путь к первому файлу.
@@ -55,16 +55,17 @@ def merge(
         SystemExit: При ошибках ввода-вывода или несовместимых аргументах.
     """
     try:
-        # Проверка на конфликт: CSV не поддерживает комментарии в нашем формате
+        # Проверка на конфликт: CSV не поддерживает комментарии
         if keep_comments and format == OutputFormat.csv:
             console.print("[red]Error: Cannot use --keep-comments with CSV format.[/red]")
             sys.exit(1)
 
-        if keep_comments:
-            unique_map = {}
+        if keep_comments:        
+            # Словарь для дедупликации: ключ - строковый IP, значение - комментарий.
+            unique_map: Dict[str, str] = {}
             
             # Вспомогательная функция для обработки потока
-            def process_stream(stream):
+            def process_stream(stream: Generator[Tuple[IPNet, str], None, None]) -> None:
                 for ip, comment in stream:
                     ip_str = str(ip)
                     if ip_str not in unique_map:
@@ -74,14 +75,14 @@ def merge(
                         if not unique_map[ip_str] and comment:
                             unique_map[ip_str] = comment
 
-            # 1. Читаем первый файл прямо в словарь
+            # 1. Читаем первый файл прямо в словарь (минуя создание огромных списков)
             process_stream(read_prefixes_with_comments(file1))
-            
-            # 2. Читаем второй файл прямо в словарь (добавляем/обновляем)
+
+            # 2. Читаем второй файл прямо в словарь
             process_stream(read_prefixes_with_comments(file2))
 
             # Восстанавливаем объекты IP для корректной сортировки
-            merged_list: List[Tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, str]] = []
+            merged_list: List[Tuple[IPNet, str]] = []
             for ip_str_key, comm in unique_map.items():
                 net_obj = ipaddress.ip_network(ip_str_key, strict=False)
                 merged_list.append((net_obj, comm))
@@ -89,8 +90,8 @@ def merge(
             # Сортировка Broadest First (аналогично ядру)
             # Ключ: (Версия, Адрес, Маска)
             merged_list.sort(key=lambda item: (
-                item[0].version, 
-                int(item[0].network_address), 
+                item[0].version,
+                int(item[0].network_address),
                 item[0].prefixlen
             ))
 
@@ -112,7 +113,6 @@ def merge(
                 print(content, end="")
 
         else:
-            # Обычный режим
             # Используем list() для загрузки генераторов в память, чтобы объединить их
             prefixes1 = list(read_networks(file1))
             prefixes2 = list(read_networks(file2))
@@ -126,8 +126,11 @@ def merge(
                 aggregate=True       # Склеиваем соседей
             )
 
+            # Материализуем результат
+            processed_list = list(processed_prefixes)
+
             # Передаем результат в обработчик вывода
-            handle_output(processed_prefixes, format, output_file)
+            handle_output(processed_list, format, output_file)
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -166,19 +169,21 @@ def intersect(
         common_prefixes = prefixes1.intersection(prefixes2)
 
         # 2. Частичные перекрытия и вложенность
-        overlapping: List[Tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
-        
+        # Список кортежей (Подсеть, Суперсеть/Пересечение)
+        overlapping: List[Tuple[IPNet, IPNet]] = []
+
         for net1 in prefixes1:
             for net2 in prefixes2:
                 # Пропускаем, если сети уже найдены как точные копии
                 if net1 in common_prefixes and net2 in common_prefixes:
                     continue
-                
-                # Оптимизация: overlaps работает быстро, subnet_of медленнее
-                if net1.overlaps(net2):
+
+                # type: ignore - Pylance иногда ложно срабатывает на overlaps с Union типами
+                if net1.overlaps(net2): 
                     # Проверяем версию перед subnet_of для безопасности типов
                     if net1.version == net2.version:
-                        # type: ignore - Pylance иногда не видит проверку версии
+                        # Используем явные проверки типов или type ignore, 
+                        # так как мы гарантировали совпадение версий
                         if net1.subnet_of(net2): # type: ignore
                             overlapping.append((net1, net2))
                         elif net2.subnet_of(net1): # type: ignore
@@ -208,6 +213,7 @@ def intersect(
             all_results.extend([sub, parent])
 
         # Финальная очистка и сортировка результата
+        # Используем set для дедупликации, потом сортируем
         all_results = list(set(all_results))
         all_results = sort_networks(all_results)
 
