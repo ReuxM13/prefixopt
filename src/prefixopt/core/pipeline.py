@@ -1,17 +1,16 @@
 """
-Модуль центрального пайплайна обработки (Pipeline).
+Модуль центрального пайплайна обработки.
 
 Этот модуль служит оркестратором для всех операций над IP-префиксами.
-Он принимает поток данных, применяет к нему фильтры, затем
-выполняет тяжелые операции (сортировка, очистка, агрегация), требующие
-полной загрузки данных, и возвращает результат в виде итератора.
+Он выстраивает процесс обработки в эффективную цепочку:
+1. Фильтрация на лету (без загрузки в память).
+2. Сортировка и тяжелые алгоритмы (с загрузкой в память по требованию).
 """
-from typing import Iterable, Iterator, Set
+from typing import Iterable
 
-# Локальные импорты
 from .ip_utils import IPNet
-# Импортируем операции с алиасами, чтобы избежать конфликта имен 
-# между аргументами функции (флагами) и самими функциями.
+# Импортируем операции с алиасами, чтобы избежать конфликта имен
+# между аргументами функции (флагами) и самими вызываемыми функциями.
 from .operations import aggregate as aggregate_op
 from .operations import remove_nested as remove_nested_op
 from .operations import sort_networks as sort_networks_op
@@ -32,60 +31,57 @@ def process_prefixes(
     exclude_reserved: bool = False,
     exclude_unspecified: bool = False,
     bogons: bool = False
-) -> Iterator[IPNet]:
+) -> Iterable[IPNet]:
     """
     Главная функция обработки префиксов.
 
-    Выполняет полный цикл оптимизации в оптимальном порядке:
-    1. Ленивая фильтрация (версии, bogons, дубликаты).
-    2. Материализация списка.
-    3. Сортировка (Broadest First).
-    4. Удаление вложенных сетей.
-    5. Агрегация.
+    Принимает на вход поток (итератор) сетей и пропускает его через серию
+    преобразований. Логика построена так, чтобы максимально долго сохранять
+    ленивость и не загружать данные в оперативную память без необходимости.
+
+    Порядок выполнения:
+    1. Дедупликация и фильтрация (версии, bogons). Работает потоково.
+    2. Сортировка (Broadest First). Загружает данные в память.
+    3. Удаление вложенных сетей. Требует сортировки.
+    4. Агрегация смежных сетей. Требует сортировки.
 
     Args:
         networks: Входной итератор объектов IP сетей.
-        sort: Выполнять сортировку (обязательно для remove_nested/aggregate).
-        remove_nested: Удалять вложенные подсети.
-        aggregate: Объединять смежные подсети.
+        sort: Включить сортировку (обязательно для оптимизации).
+        remove_nested: Удалять подсети, входящие в более крупные (10.1.1.1 в 10.0.0.0/8).
+        aggregate: Объединять соседние сети (10.0.0.0/24 + 10.0.1.0/24 -> /23).
         ipv4_only: Оставить только IPv4.
         ipv6_only: Оставить только IPv6.
-        exclude_private: Исключить частные сети.
-        exclude_loopback: Исключить Loopback.
-        exclude_link_local: Исключить Link-Local.
+        exclude_private: Исключить частные сети (RFC 1918).
+        exclude_loopback: Исключить Loopback (127.0.0.0/8).
+        exclude_link_local: Исключить Link-Local (169.254.0.0/16).
         exclude_multicast: Исключить Multicast.
         exclude_reserved: Исключить зарезервированные сети.
-        exclude_unspecified: Исключить 0.0.0.0/::.
-        bogons: Включить все фильтры исключения сразу.
+        exclude_unspecified: Исключить 0.0.0.0 и ::.
+        bogons: Включить все фильтры исключения мусора сразу.
 
-    Yields:
-        Обработанные объекты IP сетей по одному.
+    Returns:
+        Итератор (или список) обработанных IP сетей.
     """
     
-    # На этом этапе не загружаем все данные в память, работаем потоково.
+    # --- ЭТАП 1: ЛЕНИВАЯ ФИЛЬТРАЦИЯ ---
+    # На этом этапе работаем с генераторами. Данные читаются с диска по одной строке,
+    # проверяются и передаются дальше. Память почти не расходуется.
     
-    current_data: Iterable[IPNet] = networks
+    current_data = networks
 
-    # Ленивая дедупликация (удаление полных повторов)
-    # Используем set для отслеживания увиденных сетей
-    seen: Set[IPNet] = set()
-    # Конструкция (n for n in ... if n not in seen and not seen.add(n))
-    # работает, потому что set.add возвращает None (что есть False),
-    # поэтому условие "not None" становится True, и элемент проходит дальше.
-    current_data = (n for n in current_data if n not in seen and not seen.add(n))
-
-    # 1. Фильтры по версии IP
+    # Фильтры по версии протокола
     if ipv4_only:
         current_data = (n for n in current_data if n.version == 4)
     elif ipv6_only:
         current_data = (n for n in current_data if n.version == 6)
 
-    # 2. Специальные фильтры (Bogons и т.д.)
+    # Активация группы фильтров, если передан флаг --bogons
     if bogons:
         exclude_private = exclude_loopback = exclude_link_local = \
             exclude_multicast = exclude_reserved = exclude_unspecified = True
 
-    # Если включен хотя бы один фильтр, подключаем генератор фильтрации
+    # Применение специальных фильтров
     if any([exclude_private, exclude_loopback, exclude_link_local,
             exclude_multicast, exclude_reserved, exclude_unspecified]):
         current_data = filter_special_op(
@@ -98,36 +94,35 @@ def process_prefixes(
             exclude_unspecified=exclude_unspecified
         )
 
-    # Тяжелые операции
-    # Сортировка и агрегация требуют видения всей картины данных,
-    # поэтому здесь вынуждены загрузить отфильтрованный поток в список.
+    # --- ЭТАП 2: ТЯЖЕЛЫЕ ОПЕРАЦИИ ---
+    # Операции ниже требуют анализа всей совокупности данных (сравнение всех со всеми
+    # или с соседями), поэтому поток будет загружен в память (List) при первом вызове.
     
-    data_list = list(current_data)
-    
-    # Флаг, указывающий, отсортирован ли список в порядке Broadest First.
-    # Это требование для корректной работы remove_nested и aggregate.
     is_sorted_broadest = False
 
     if sort:
-        data_list = sort_networks_op(data_list)
+        # Функция сортировки внутри себя сделает list(current_data),
+        # загрузив отфильтрованные данные в RAM.
+        current_data = sort_networks_op(current_data)
         is_sorted_broadest = True
     
     if remove_nested:
-        # Передаем флаг is_sorted_broadest. Если True, функция пропустит
-        # свою внутреннюю сортировку, что сэкономит время.
-        data_list = remove_nested_op(data_list, assume_sorted=is_sorted_broadest)
-        # После remove_nested список гарантированно остается отсортированным
+        # Удаляем вложенные сети.
+        # Если данные уже отсортированы (is_sorted_broadest=True), алгоритм работает за O(N).
+        # Если нет — функция сама отсортирует их внутри.
+        current_data = remove_nested_op(current_data, assume_sorted=is_sorted_broadest)
+        # Результат этой операции гарантированно отсортирован
         is_sorted_broadest = True
         
     if aggregate:
-        # Защита от логических ошибок: агрегация работает ТОЛЬКО на сортированных данных.
-        # Если по какой-то причине sort=False, а aggregate=True, мы обязаны
-        # отсортировать данные сейчас, иначе результат будет некорректным.
+        # Агрегация критически зависит от порядка следования.
+        # Если мы пропустили шаги выше, нужно принудительно отсортировать данные сейчас.
         if not is_sorted_broadest:
-            data_list = sort_networks_op(data_list)
+            current_data = sort_networks_op(current_data)
             is_sorted_broadest = True
         
-        data_list = aggregate_op(data_list)
+        current_data = aggregate_op(current_data)
 
-    # Возвращаем результат как итератор, чтобы сохранить единый интерфейс
-    yield from data_list
+    # Возвращаем результат. Это может быть генератор (если только фильтровали)
+    # или список (если оптимизировали). Вызывающий код (CLI) обработает оба варианта.
+    return current_data
