@@ -8,17 +8,15 @@
 import sys
 import ipaddress
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple, Set
+from typing import Optional, List, Dict, Tuple
 
 import typer
-from ipaddress import IPv4Network, IPv6Network
 
 # Локальные импорты
 from .common import OutputFormat, handle_output, console
 from ..data.file_reader import read_networks, read_prefixes_with_comments
 from ..core.pipeline import process_prefixes
 from ..core.operations.sorter import sort_networks
-from ..core.ip_utils import prefix_to_int_range
 
 
 def merge(
