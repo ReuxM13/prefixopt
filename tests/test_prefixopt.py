@@ -16,7 +16,7 @@ from prefixopt.core.operations.sorter import sort_networks
 from prefixopt.core.operations.nested import remove_nested
 from prefixopt.core.operations.aggregator import aggregate
 from prefixopt.core.operations.subnetter import split_network
-from prefixopt.data.file_reader import read_prefixes, normalize_single_ip
+from prefixopt.data.file_reader import read_networks, normalize_single_ip
 
 # Глобальный раннер для CLI-тестов
 runner = CliRunner()
@@ -150,7 +150,7 @@ def test_parsing_dirty_data(tmp_path: Path) -> None:
     """, encoding="utf-8")
     
     # read_prefixes возвращает генератор, поэтому оборачиваем в list()
-    results = list(read_prefixes(f))
+    results = list(read_networks(f))
     str_results = {str(r) for r in results}
     
     assert "1.1.1.1/32" in str_results
@@ -349,25 +349,23 @@ def test_cli_diff_summary(tmp_path: Path) -> None:
 
 def test_security_max_line_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    Проверка лимита на количество строк.
-    Используем monkeypatch, чтобы уменьшить лимит для теста.
+    Проверка Hard Limit на количество строк.
     """
-    # Подменяем константу в модуле file_reader на 2 строки
     monkeypatch.setattr("prefixopt.data.file_reader.MAX_LINE_COUNT", 2)
     
     f = tmp_path / "huge.txt"
     f.write_text("1.1.1.1\n2.2.2.2\n3.3.3.3\n4.4.4.4", encoding="utf-8")
     
-    # Ожидаем ошибку
     result = runner.invoke(app, ["optimize", str(f)])
     assert result.exit_code == 1
-    assert "exceeds the limit" in result.stdout
-
+    # Проверяем наличие ключевых слов, не привязываясь к точному артикли
+    assert "exceeds" in result.stdout
+    assert "limit" in result.stdout
+    assert "lines" in result.stdout
 
 def test_security_max_size_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    Проверка лимита на размер файла.
-    Лимит 10 байт.
+    Проверка Hard Limit на размер файла.
     """
     monkeypatch.setattr("prefixopt.data.file_reader.MAX_FILE_SIZE_BYTES", 10)
     
@@ -376,7 +374,9 @@ def test_security_max_size_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     
     result = runner.invoke(app, ["optimize", str(f)])
     assert result.exit_code == 1
-    assert "exceeds the safety limit" in result.stdout
+    # Проверяем ключевые слова
+    assert "exceeds" in result.stdout
+    assert "safety limit" in result.stdout
 
 # ==============================================================================
 # 5. Исключения
@@ -490,3 +490,48 @@ def test_cli_exclude_invalid_target(tmp_path):
     
     assert result.exit_code == 1
     assert "Error" in result.stdout
+
+
+# ==============================================================================
+# 6. STDIN (PIPE) TESTS
+# ==============================================================================
+
+def test_stdin_optimize():
+    """Проверка работы optimize через pipe (без input_file)"""
+    input_data = "10.0.0.0/24\n10.0.0.0/8\n"
+    # runner.invoke(app, args, input=...) эмулирует stdin
+    result = runner.invoke(app, ["optimize"], input=input_data)
+    
+    assert result.exit_code == 0
+    # Должен остаться только /8 (оптимизация сработала)
+    assert "10.0.0.0/8" in result.stdout
+    assert "10.0.0.0/24" not in result.stdout
+
+def test_stdin_filter():
+    """Проверка работы filter через pipe"""
+    input_data = "8.8.8.8\n10.0.0.1\n"
+    # Фильтруем приватные сети
+    result = runner.invoke(app, ["filter", "--no-private"], input=input_data)
+    
+    assert result.exit_code == 0
+    assert "8.8.8.8/32" in result.stdout
+    assert "10.0.0.1" not in result.stdout
+
+def test_stdin_stats():
+    """Проверка stats через pipe"""
+    input_data = "1.1.1.1\n2.2.2.2\n"
+    result = runner.invoke(app, ["stats"], input=input_data)
+    
+    assert result.exit_code == 0
+    # Проверяем, что статистика посчиталась
+    assert "Original prefix count" in result.stdout
+    assert "2" in result.stdout # Count
+
+def test_stdin_check():
+    """Проверка check через pipe"""
+    input_data = "10.0.0.0/8\n"
+    # Проверяем, входит ли 10.1.1.1 в поток, поданный на вход
+    result = runner.invoke(app, ["check", "10.1.1.1"], input=input_data)
+    
+    assert result.exit_code == 0
+    assert "is contained in" in result.stdout

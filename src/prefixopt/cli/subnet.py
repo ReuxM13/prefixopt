@@ -14,14 +14,14 @@ from ipaddress import IPv4Network, IPv6Network
 
 # Локальные импорты
 from .common import OutputFormat, handle_output, console
-from ..data.file_reader import read_networks
+from ..data.file_reader import read_networks, read_stream
 from ..core.operations.subnetter import split_network
 
 
 def split(
     target_length: int = typer.Argument(..., help="Target prefix length (e.g., 24 for /24)"),
-    prefix: str = typer.Argument(None, help="Prefix to split (e.g., 192.168.0.0/16)"),
-    input_file: Optional[Path] = typer.Option(None, "--file", "-i", help="Input file with prefixes to split"),
+    prefix: Optional[str] = typer.Argument(None, help="Prefix to split (e.g., 192.168.0.0/16). Optional if file/stdin used."),
+    input_file: Optional[Path] = typer.Option(None, "--file", "-i", help="Input file"),
     output_file: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
     format: OutputFormat = typer.Option(
         OutputFormat.list,
@@ -49,11 +49,19 @@ def split(
         # Список для хранения всех сгенерированных подсетей
         # Используем Union для явной типизации
         result: List[Union[IPv4Network, IPv6Network]] = []
-
+        
+        # Определяем источник данных
+        prefixes = None
+        
         if input_file:
-            # Режим работы с файлом: читаем и разбиваем каждый префикс
-            # Используем генератор для чтения, но результат накапливаем в список
             prefixes = read_networks(input_file)
+        elif not sys.stdin.isatty() and not prefix:
+            # Читаем из STDIN только если не передан конкретный префикс аргументом
+            prefixes = read_stream(sys.stdin)
+            
+        if prefixes:
+            # Режим работы с файлом/потоком: читаем и разбиваем каждый префикс
+            # Используем генератор для чтения, но результат накапливаем в список
             for p in prefixes:
                 subnets = split_network(p, target_length)
                 result.extend(subnets)
@@ -63,8 +71,8 @@ def split(
             network = ipaddress.ip_network(prefix, strict=False)
             result = split_network(network, target_length)
         else:
-            # Если не указан ни префикс, ни файл - это ошибка использования
-            console.print("[red]Error: Either a prefix or an input file must be specified[/red]")
+            # Если не указан ни префикс, ни файл, ни поток - это ошибка использования
+            console.print("[red]Error: Either a prefix, an input file, or piped data must be specified[/red]")
             sys.exit(1)
 
         # Передаем список результатов в обработчик вывода

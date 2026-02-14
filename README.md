@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="banner.png" alt="prefixOptimizer Banner" width="100%">
+  <img src="static\banner.png" alt="prefixOptimizer Banner" width="100%">
 </p>
 
 [🇷🇺 Читать на русском](README_RU.md)
@@ -16,6 +16,9 @@ Allows organizing scattered lists of IP addresses:
 - Subtraction: Excluding specific addresses or subnets from the general list with automatic range splitting.
 - Comparison: Semantic comparison of two lists (shows which subnets were added or removed).
 - Versatility: The parser automatically extracts prefixes from any text files (logs, equipment configurations, CSV, JSON).
+- Pipe Support (STDIN): Supports UNIX-way pipelining. You can pass data via standard input instead of files.
+  Supported commands: `optimize`, `filter`, `stats`, `check`, `split`, `exclude`.
+  Example: `cat logs.txt | prefixopt optimize`
 
 ---
 
@@ -42,7 +45,7 @@ pip install -e .
 ## Usage
 
 <p align="left">
-  <img src="Using.png" alt="prefixopt using" width="100%">
+  <img src="static\Using.png" alt="prefixopt using" width="100%">
 </p>
 
 ---
@@ -62,7 +65,10 @@ The architecture is built on a modular principle (Core / CLI / Data).
 ---
 
 ## To-Do
-
+- [ ] Allow reading input from standard input (pipes) instead of requiring a file argument (e.g., `cat list.txt | prefixopt optimize`).
+- [ ] `expand` Command: Convert CIDR prefixes into a list of individual IP addresses (CIDR expansion).
+- [ ] Slicing: Add functionality to split the output into multiple files based on line count or host count.
+- [ ] Integrate the `ijson` library to parse huge JSON files without loading them entirely into RAM.
 - [ ] Refactor package structure to allow clean imports (e.g., `import prefixopt`).
 - [ ] Expose core functions (`optimize`, `filter`, `subtract`) as a stable public API.
 - [ ] Add type stubs and documentation for library usage.

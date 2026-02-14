@@ -12,7 +12,7 @@ import typer
 
 # Локальные импорты
 from .common import OutputFormat, handle_output, console
-from ..data.file_reader import read_networks
+from ..data.file_reader import read_networks, read_stream
 from ..core.pipeline import process_prefixes
 from ..core.ip_utils import normalize_prefix, IPNet
 from ..core.operations.subtractor import subtract_networks
@@ -20,7 +20,7 @@ from ..core.operations.subtractor import subtract_networks
 
 def exclude(
     target: str = typer.Argument(..., help="Prefix to exclude (e.g. 10.0.0.0/8) OR path to file with prefixes"),
-    input_file: Path = typer.Argument(..., help="Input file with IP prefixes"),
+    input_file: Optional[Path] = typer.Argument(None, help="Input file with IP prefixes (optional if using pipe)"),
     output_file: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
     ipv6_only: bool = typer.Option(False, "--ipv6-only", help="Process IPv6 prefixes only"),
     ipv4_only: bool = typer.Option(False, "--ipv4-only", help="Process IPv4 prefixes only"),
@@ -66,12 +66,17 @@ def exclude(
                 console.print(f"[red]Error: '{target}' is not a valid IP prefix and not an existing file.[/red]")
                 sys.exit(1)
 
-        # 2. Чтение исходного файла
-        # Используем генератор, subtractor будет потреблять его по мере необходимости
-        source_prefixes = read_networks(input_file)
+        # 2. Чтение исходного файла (или потока)
+        if input_file:
+            source_prefixes = read_networks(input_file)
+        elif not sys.stdin.isatty():
+            source_prefixes = read_stream(sys.stdin)
+        else:
+            console.print("[red]Error: No input provided. Give me a file or pipe data.[/red]")
+            sys.exit(1)
 
         # 3. Вычитание
-        with console.status("Processing exclusions..."):
+        with console.status("Processing exclusions...", spinner="dots"):
             # Результат вычитания - сырой список фрагментов
             raw_result = subtract_networks(source_prefixes, exclude_list)
             
@@ -86,9 +91,11 @@ def exclude(
                 ipv4_only=ipv4_only,
                 ipv6_only=ipv6_only
             )
+            # Материализуем здесь, чтобы спиннер работал корректно
+            final_list = list(final_result)
 
         # 5. Вывод
-        handle_output(final_result, format, output_file)
+        handle_output(final_list, format, output_file)
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")

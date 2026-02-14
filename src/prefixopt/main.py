@@ -16,7 +16,7 @@ from .cli import diff as diff_cmd
 app = typer.Typer(add_completion=False)
 
 # Регистрация команд
-# Мы берем функцию из модуля и вешаем на нее декоратор app.command
+# Берем функцию из модуля и вешаем на нее декоратор app.command
 
 app.command(name="optimize")(opt_cmd.optimize)
 app.command(name="add")(opt_cmd.add)
