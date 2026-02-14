@@ -45,7 +45,7 @@ pip install -e .
 ## Пример использование
 
 <p align="left">
-  <img src="static\Using.png" alt="prefixopt using" width="100%">
+  <img src="static\usage.png" alt="prefixopt using" width="100%">
 </p>
 
 
