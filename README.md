@@ -66,9 +66,8 @@ The architecture is built on a modular principle (Core / CLI / Data).
 ## To-Do
 - [x] Allow reading input from standard input (pipes) instead of requiring a file argument (e.g., `cat list.txt | prefixopt optimize`).
 - [x] Integrate the `ijson` library to parse huge JSON files without loading them entirely into RAM.
-- [ ] Refactor package structure to allow clean imports (e.g., `import prefixopt`).
-- [ ] Expose core functions (`optimize`, `filter`, `subtract`) as a stable public API.
-- [ ] Add type stubs and documentation for library usage.
+- [x] Refactor package structure to allow clean imports (e.g., `import prefixopt`).
+- [x] Expose core functions (`optimize`, `filter`, `subtract`) as a stable public API.
 - [ ] Implement colorized output for IPv4 (e.g., green) and IPv6 (e.g., purple, mask is gray) addresses when printing to stdout using `Rich`.
 - [ ] Tree View for `check`. Visualize prefix hierarchy. Instead of a flat list, display how the target IP/subnet fits into supernets using a graphical tree structure (`rich.tree`).
 
