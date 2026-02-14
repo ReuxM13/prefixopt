@@ -6,7 +6,7 @@
 """
 import sys
 from pathlib import Path
-from typing import Optional, Iterable, Set, Tuple
+from typing import Optional, Iterable
 from enum import Enum
 
 import typer
@@ -43,18 +43,6 @@ def diff(
 
     Оба файла предварительно проходят полную оптимизацию.
     Вы можете выбрать, какие именно изменения показывать, используя флаг --mode.
-
-    Args:
-        new_file: Файл с "новым" состоянием.
-        old_file: Файл со "старым" состоянием.
-        output_file: Файл для сохранения отчета.
-        summary_only: Показывать только цифры.
-        mode: Режим отображения (changes, added, removed, unchanged, all).
-        ipv6_only: Обрабатывать только IPv6.
-        ipv4_only: Обрабатывать только IPv4.
-
-    Raises:
-        SystemExit: При ошибках.
     """
     try:
         def prepare(path: Path) -> Iterable[IPNet]:
