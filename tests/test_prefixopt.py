@@ -149,7 +149,7 @@ def test_parsing_dirty_data(tmp_path: Path) -> None:
     Config: ip address 192.168.1.1 255.255.255.0
     """, encoding="utf-8")
     
-    # read_prefixes возвращает генератор, поэтому оборачиваем в list()
+    # read_networks возвращает генератор, поэтому оборачиваем в list()
     results = list(read_networks(f))
     str_results = {str(r) for r in results}
     
@@ -535,3 +535,79 @@ def test_stdin_check():
     
     assert result.exit_code == 0
     assert "is contained in" in result.stdout
+
+
+# ==============================================================================
+# 5. JSON STREAMING TESTS (ijson)
+# ==============================================================================
+
+def test_json_streaming_basic(tmp_path):
+    """
+    Проверка потокового чтения корректного JSON.
+    """
+    f = tmp_path / "test.json"
+    # Стандартная структура { "prefixes": [...] }
+    json_content = """
+    {
+        "meta": "some info",
+        "prefixes": [
+            "10.0.0.1",
+            "192.168.1.0/24"
+        ]
+    }
+    """
+    f.write_text(json_content, encoding="utf-8")
+    
+    # Читаем
+    results = list(read_networks(f))
+    
+    assert len(results) == 2
+    # Проверка, что объекты создались
+    assert ipaddress.ip_network("10.0.0.1/32") in results
+    assert ipaddress.ip_network("192.168.1.0/24") in results
+
+def test_json_streaming_limit(tmp_path, monkeypatch):
+    """
+    Проверка Hard Limit внутри JSON массива.
+    Даже если файл маленький (байты), но в массиве миллиард элементов - мы должны остановиться.
+    """
+    # Ставим лимит в 2 элемента
+    monkeypatch.setattr("prefixopt.data.file_reader.MAX_LINE_COUNT", 2)
+    
+    f = tmp_path / "huge_array.json"
+    f.write_text('{"prefixes": ["1.1.1.1", "2.2.2.2", "3.3.3.3"]}', encoding="utf-8")
+    
+    # Должен упасть, так как элементов 3, а лимит 2
+    with pytest.raises(ValueError, match="JSON array exceeds"):
+        list(read_networks(f))
+
+def test_json_malformed(tmp_path):
+    """
+    Проверка устойчивости к битому JSON.
+    ijson может выбросить ошибку в середине потока. Мы должны её погасить или обработать.
+    В текущей реализации мы ловим ijson.JSONError и выходим.
+    """
+    f = tmp_path / "broken.json"
+    # Обрывается посередине
+    f.write_text('{"prefixes": ["1.1.1.1", "2.2.2', encoding="utf-8")
+    
+    # Не должно быть крэша (Exception)
+    results = list(read_networks(f))
+    
+    # Он успел прочитать первый элемент
+    assert len(results) == 1
+    assert str(results[0]) == "1.1.1.1/32"
+
+def test_json_garbage_values(tmp_path):
+    """
+    JSON валидный, но внутри массива мусор вместо IP.
+    """
+    f = tmp_path / "garbage.json"
+    f.write_text('{"prefixes": ["1.1.1.1", "NotAnIP", "10.0.0.1"]}', encoding="utf-8")
+    
+    results = list(read_networks(f))
+    
+    # Должен пропустить мусор и вернуть только валидные
+    assert len(results) == 2
+    assert ipaddress.ip_network("1.1.1.1/32") in results
+    assert ipaddress.ip_network("10.0.0.1/32") in results

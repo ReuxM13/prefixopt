@@ -10,11 +10,11 @@
 """
 import sys
 import csv
-import json
+import ijson
 import re
 import ipaddress
 from pathlib import Path
-from typing import List, Union, Generator, Iterator, Tuple, TextIO
+from typing import List, Union, Generator, Iterator, Tuple, TextIO, BinaryIO
 
 from ipaddress import IPv4Network, IPv6Network
 from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, TaskID
@@ -25,6 +25,23 @@ from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, T
 MAX_FILE_SIZE_MB = 700
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 MAX_LINE_COUNT = 8_000_000
+
+
+class ProgressFileWrapper:
+    """
+    Прокси-обертка для файлового объекта.
+    Работает с БАЙТАМИ для совместимости с ijson.
+    """
+    def __init__(self, f: BinaryIO, progress: Progress, task_id: TaskID):
+        self.f = f
+        self.progress = progress
+        self.task_id = task_id
+
+    def read(self, size: int = -1) -> bytes:
+        data = self.f.read(size)
+        if data:
+            self.progress.update(self.task_id, advance=len(data))
+        return data
 
 
 # --- Ядро парсинга ---
@@ -225,30 +242,38 @@ def _read_csv_generator(path: Path, progress: Progress, task_id: TaskID, column_
 
 def _read_json_generator(path: Path, progress: Progress, task_id: TaskID, key_name: str = 'prefixes') -> Generator[Union[IPv4Network, IPv6Network], None, None]:
     """
-    Чтение JSON.
-    Ограничение: JSON загружается в память целиком.
+    Потоковое чтение JSON с помощью ijson.
+    Использует бинарный режим ('rb') для максимальной производительности.
     """
-    with open(path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        progress.update(task_id, completed=path.stat().st_size)
-
-    prefix_list = data.get(key_name, [])
-    
-    if len(prefix_list) > MAX_LINE_COUNT:
-        raise ValueError(f"JSON array exceeds limit of {MAX_LINE_COUNT} items.")
-
-    for item in prefix_list:
-        prefix_text = str(item).strip()
-        # Для элементов JSON тоже используем экстрактор (вдруг там мусор)
-        extracted = extract_prefixes_from_text(prefix_text)
-        if extracted:
-            for network in extracted:
-                yield network
-        else:
-            try:
-                yield ipaddress.ip_network(prefix_text, strict=False)
-            except ValueError:
-                pass
+    # Открываем в BINARY режиме ('rb')
+    with open(path, 'rb') as f:
+        # Оборачиваем файл в прокси для прогресс-бара
+        wrapped_file = ProgressFileWrapper(f, progress, task_id)
+        
+        parser_path = f"{key_name}.item"
+        
+        count = 0
+        try:
+            for item in ijson.items(wrapped_file, parser_path):
+                count += 1
+                if count > MAX_LINE_COUNT:
+                    raise ValueError(f"JSON array exceeds the limit of {MAX_LINE_COUNT} items.")
+                
+                # ijson сам декодирует байты в строки/числа Python
+                prefix_text = str(item).strip()
+                
+                extracted = extract_prefixes_from_text(prefix_text)
+                if extracted:
+                    for network in extracted:
+                        yield network
+                else:
+                    try:
+                        yield ipaddress.ip_network(prefix_text, strict=False)
+                    except ValueError:
+                        print(f"Warning: Invalid prefix '{prefix_text}' in JSON", file=sys.stderr)
+                        
+        except ijson.JSONError:
+            pass
 
 
 # --- Public API ---

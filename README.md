@@ -42,7 +42,7 @@ source venv/bin/activate # Linux
 pip install -e .
 ```
 
-## Usage
+## Usage example
 
 <p align="left">
   <img src="static\Using.png" alt="prefixopt using" width="100%">
@@ -59,16 +59,13 @@ The architecture is built on a modular principle (Core / CLI / Data).
 
 ### Limitations
 - Memory Overhead: The utility is written in pure Python. Due to overhead on ipaddress objects, processing lists larger than 8-10 million lines may require significant RAM (starting from 8-10GB).
-- JSON: JSON parsing is not streaming - the file is loaded into memory entirely.
 - Big Data: The tool is not designed for real-time big data processing. It is a utility for configurations and access lists, not for traffic analytics.
 
 ---
 
 ## To-Do
-- [ ] Allow reading input from standard input (pipes) instead of requiring a file argument (e.g., `cat list.txt | prefixopt optimize`).
-- [ ] `expand` Command: Convert CIDR prefixes into a list of individual IP addresses (CIDR expansion).
-- [ ] Slicing: Add functionality to split the output into multiple files based on line count or host count.
-- [ ] Integrate the `ijson` library to parse huge JSON files without loading them entirely into RAM.
+- [x] Allow reading input from standard input (pipes) instead of requiring a file argument (e.g., `cat list.txt | prefixopt optimize`).
+- [x] Integrate the `ijson` library to parse huge JSON files without loading them entirely into RAM.
 - [ ] Refactor package structure to allow clean imports (e.g., `import prefixopt`).
 - [ ] Expose core functions (`optimize`, `filter`, `subtract`) as a stable public API.
 - [ ] Add type stubs and documentation for library usage.
