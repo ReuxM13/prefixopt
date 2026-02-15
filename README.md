@@ -20,6 +20,11 @@ Allows organizing scattered lists of IP addresses:
   Supported commands: `optimize`, `filter`, `stats`, `check`, `split`, `exclude`.
   Example: `cat logs.txt | prefixopt optimize`
 
+### Who is the utility for?
+Operations Engineers (Ops): optimize, add, merge, stats.
+Security guards (Sec): diff (audit), intersect (conflicts), filter (clearing feeds).
+Pentesters / Researchers: exclude (scope management), split (goal preparation), check.
+
 ---
 
 ## Installation
@@ -60,6 +65,21 @@ The architecture is built on a modular principle (Core / CLI / Data).
 ### Limitations
 - Memory Overhead: The utility is written in pure Python. Due to overhead on ipaddress objects, processing lists larger than 8-10 million lines may require significant RAM (starting from 8-10GB).
 - Big Data: The tool is not designed for real-time big data processing. It is a utility for configurations and access lists, not for traffic analytics.
+
+### Detailed descriptions of commands
+
+| Command | Logic / Math | Goal | Output Format | Key Nuance |
+| :--- | :--- | :--- | :--- | :--- |
+| **`optimize`** | `Aggr(Sort(Set(A)))` | **Compression**<br>Shrink ACLs, remove duplicates. | CIDR List | Performs full cycle: Sort - Remove Nested - Aggregate. |
+| **`add`** | `Optimize(A + {new})` | **Editing**<br>Add a new IP and re-optimize immediately. | CIDR List | Automatically merges the new item into existing subnets. |
+| **`filter`** | `A - {Bogons}` | **Sanitization**<br>Remove private, local, and reserved IPs. | Clean List | Does *not* aggregate, only removes unwanted items. |
+| **`merge`** | `Optimize(A ∪ B ...)` | **Union**<br>Combine multiple feeds into one master list. | CIDR List | Supports `--keep-comments` (deduplication without aggregation). |
+| **`intersect`** | `A ∩ B` | **Conflict Analysis**<br>Find common zones or overlapping rules. | Report<br>(Exact + Partial) | Visualizes exactly which prefix from Source A overlaps with Source B. |
+| **`exclude`** | `A \ B` | **Subtraction**<br>Remove whitelist from blacklist. | Fragments List | Mathematically punches holes in networks, splitting them. |
+| **`diff`** | `(B \ A) ∪ (A \ B)` | **Audit**<br>What changed since the last version? | Patch (`+`, `-`, `=`) | Semantic comparison (understands that two `/24` equal one `/23`). |
+| **`check`** | `Target ∈ Set` | **Lookup**<br>Is this IP covered by our rules? | Parent Networks | Finds all supernets containing the target IP. |
+| **`split`** | `Subnet(A, len)` | **De-aggregation**<br>Slice networks into smaller chunks. | Subnets List | Useful for scanning scopes (e.g. split `/16` into `/24`s). |
+| **`stats`** | `Count(A)` | **Analytics**<br>Compression ratio, unique IPs count. | Metrics Table | Calculates actual unique IPs, ignoring overlaps. |
 
 ---
 
