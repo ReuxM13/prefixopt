@@ -879,3 +879,73 @@ def test_parsing_ip_ranges():
     # Убеждаемся, что не создалась инвалидная /31
     for r in cidr_strs_2:
         assert "/31" not in r
+
+
+def test_cli_exclude_keep_comments(tmp_path: Path):
+    """
+    Тест команды exclude с флагом --keep-comments.
+    Проверяет наследование комментариев при разбиении сетей.
+    """
+    f_in = tmp_path / "source.txt"
+    f_in.write_text(
+        "10.0.0.0/24 # Dept A\n"       # Будет разбита
+        "192.168.1.0/24 # Dept B\n"   # Будет удалена полностью
+        "172.16.0.0/24\n"             # Без комментария (не тронута)
+        "10.10.10.10 # Host C\n",     # Не тронута, с комментом
+        encoding="utf-8"
+    )
+
+    # Исключаем:
+    # 1. 10.0.0.1 (разбивает Dept A)
+    # 2. 192.168.0.0/16 (удаляет Dept B полностью)
+    f_exclude = tmp_path / "deny.txt"
+    f_exclude.write_text("10.0.0.1\n192.168.0.0/16", encoding="utf-8")
+
+    result = runner.invoke(app, ["exclude", str(f_exclude), str(f_in), "--keep-comments"])
+
+    assert result.exit_code == 0
+    out = result.stdout
+
+    # 1. Проверка разбиения Dept A
+    # Исключили .1, значит остались куски.
+    # Самый первый кусок 10.0.0.0/32 должен быть с комментом
+    assert "10.0.0.0/32 # Dept A" in out
+    # Остальные куски (например .2/31) тоже должны унаследовать
+    assert "10.0.0.2/31 # Dept A" in out
+    # Самого исключенного IP быть не должно
+    assert "10.0.0.1/32" not in out
+
+    # 2. Проверка полного удаления Dept B
+    assert "192.168.1.0" not in out
+    assert "Dept B" not in out
+
+    # 3. Проверка нетронутой сети без комментария
+    assert "172.16.0.0/24" in out
+    # Убеждаемся, что к ней не прилип чужой коммент
+    assert "172.16.0.0/24 #" not in out
+
+    # 4. Проверка нетронутой сети с комментарием
+    assert "10.10.10.10/32 # Host C" in out
+
+def test_cli_exclude_keep_comments_edge_case(tmp_path: Path):
+    """
+    Граничный случай: Исключение совпадает с началом сети.
+    """
+    f_in = tmp_path / "edge.txt"
+    f_in.write_text("10.0.0.0/30 # Edge Test", encoding="utf-8") # .0 - .3
+
+    # Исключаем .0 (Network address)
+    result = runner.invoke(app, ["exclude", "10.0.0.0", str(f_in), "--keep-comments"])
+
+    assert result.exit_code == 0
+    out = result.stdout
+
+    # Должен остаться .1, .2, .3 (или агрегированные куски)
+    # .0 должен исчезнуть
+    assert "10.0.0.0" not in out
+    
+    # Оставшиеся должны иметь коммент
+    # .1/32
+    assert "10.0.0.1/32 # Edge Test" in out
+    # .2/31 (.2 и .3)
+    assert "10.0.0.2/31 # Edge Test" in out
