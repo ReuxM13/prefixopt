@@ -949,3 +949,111 @@ def test_cli_exclude_keep_comments_edge_case(tmp_path: Path):
     assert "10.0.0.1/32 # Edge Test" in out
     # .2/31 (.2 и .3)
     assert "10.0.0.2/31 # Edge Test" in out
+
+
+def test_cli_optimize_strict_rejects_host_bits_from_file(tmp_path: Path) -> None:
+    """
+    optimize --strict должен падать, если в файле есть сеть с выставленными host bits.
+    """
+    f = tmp_path / "bad.txt"
+    f.write_text("109.234.11.96/26\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["optimize", str(f), "--strict"])
+
+    assert result.exit_code == 1
+    assert "host bits are set" in result.stdout
+    assert "109.234.11.96/26" in result.stdout
+    assert "109.234.11.64/26" in result.stdout
+
+
+def test_cli_optimize_strict_rejects_host_bits_from_stdin() -> None:
+    """
+    optimize --strict должен падать и при чтении из STDIN.
+    """
+    input_data = "109.234.11.96/26\n"
+
+    result = runner.invoke(app, ["optimize", "--strict"], input=input_data)
+
+    assert result.exit_code == 1
+    assert "host bits are set" in result.stdout
+    assert "109.234.11.96/26" in result.stdout
+
+
+def test_cli_optimize_strict_accepts_valid_networks(tmp_path: Path) -> None:
+    """
+    optimize --strict не должен мешать обработке валидных сетей.
+    """
+    f = tmp_path / "good.txt"
+    f.write_text("109.234.11.64/26\n109.234.11.128/25\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["optimize", str(f), "--strict"])
+
+    assert result.exit_code == 0
+    assert "109.234.11.64/26" in result.stdout
+    assert "109.234.11.128/25" in result.stdout
+
+
+def test_cli_intersect_strict_rejects_invalid_first_file(tmp_path: Path) -> None:
+    """
+    intersect --strict должен падать, если первый файл содержит невалидную сеть.
+    """
+    f1 = tmp_path / "bad_a.txt"
+    f2 = tmp_path / "good_b.txt"
+
+    f1.write_text("109.234.11.96/26\n", encoding="utf-8")
+    f2.write_text("109.234.11.64/26\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["intersect", str(f1), str(f2), "--strict"])
+
+    assert result.exit_code == 1
+    assert "host bits are set" in result.stdout
+    assert "109.234.11.96/26" in result.stdout
+
+
+def test_cli_intersect_strict_rejects_invalid_second_file(tmp_path: Path) -> None:
+    """
+    intersect --strict должен падать, если второй файл содержит невалидную сеть.
+    """
+    f1 = tmp_path / "good_a.txt"
+    f2 = tmp_path / "bad_b.txt"
+
+    f1.write_text("109.234.11.64/26\n", encoding="utf-8")
+    f2.write_text("109.234.11.96/26\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["intersect", str(f1), str(f2), "--strict"])
+
+    assert result.exit_code == 1
+    assert "host bits are set" in result.stdout
+    assert "109.234.11.96/26" in result.stdout
+
+
+def test_cli_intersect_self_mode_strict_accepts_valid_file(tmp_path: Path) -> None:
+    """
+    intersect в режиме одного файла должен работать с --strict, если файл валиден.
+    """
+    f = tmp_path / "self_good.txt"
+    f.write_text(
+        "10.0.0.0/8\n"
+        "10.0.0.0/24\n"
+        "192.168.1.0/24\n",
+        encoding="utf-8"
+    )
+
+    result = runner.invoke(app, ["intersect", str(f), "--strict"])
+
+    assert result.exit_code == 0
+    assert "Self-Intersection Report" in result.stdout or "Internal Overlaps" in result.stdout
+
+
+def test_cli_intersect_self_mode_strict_rejects_invalid_file(tmp_path: Path) -> None:
+    """
+    intersect в режиме одного файла должен падать с --strict, если файл содержит host bits.
+    """
+    f = tmp_path / "self_bad.txt"
+    f.write_text("109.234.11.96/26\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["intersect", str(f), "--strict"])
+
+    assert result.exit_code == 1
+    assert "host bits are set" in result.stdout
+    assert "109.234.11.96/26" in result.stdout
