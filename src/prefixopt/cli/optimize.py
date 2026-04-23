@@ -35,7 +35,12 @@ def optimize(
         "--format", "-f",
         help="Output format: 'list' (1 per line) or 'csv' (single line, comma-separated)"
     ),
-    keep_comments: bool = typer.Option(False, "--keep-comments", help="Preserve comments. WARNING: Disables aggregation!")
+    keep_comments: bool = typer.Option(False, "--keep-comments", help="Preserve comments. WARNING: Disables aggregation!"),
+    strict: bool = typer.Option(
+    False,
+    "--strict",
+    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
+    )
 ) -> None:
     """
     Optimizes the list of IP prefixes.
@@ -65,10 +70,10 @@ def optimize(
             
             if input_file:
                 # Читаем из файла
-                generator = read_prefixes_with_comments(input_file)
+                generator = read_prefixes_with_comments(input_file, strict=strict)
             elif not sys.stdin.isatty():
                 # Читаем из пайпа
-                generator = read_stream_with_comments(sys.stdin)
+                generator = read_stream_with_comments(sys.stdin, strict=strict)
             else:
                 # Если ни файла, ни пайпа нет
                 console.print("[red]Error: --keep-comments requires an input file or piped data.[/red]")
@@ -132,9 +137,9 @@ def optimize(
         else:
             # Определяем источник данных
             if input_file:
-                prefixes = read_networks(input_file)
+                prefixes = read_networks(input_file, strict=strict)
             elif not sys.stdin.isatty():
-                prefixes = read_stream(sys.stdin)
+                prefixes = read_stream(sys.stdin, strict=strict)
             else:
                 console.print("[red]Error: No input provided. Give me a file or pipe data via STDIN.[/red]")
                 sys.exit(1)

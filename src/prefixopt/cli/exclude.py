@@ -24,7 +24,12 @@ def exclude(
     ipv6_only: bool = typer.Option(False, "--ipv6-only", help="Process IPv6 only"),
     ipv4_only: bool = typer.Option(False, "--ipv4-only", help="Process IPv4 only"),
     format: OutputFormat = typer.Option(OutputFormat.list, "--format", "-f"),
-    keep_comments: bool = typer.Option(False, "--keep-comments", help="Preserve comments from input file.")
+    keep_comments: bool = typer.Option(False, "--keep-comments", help="Preserve comments from input file."),
+    strict: bool = typer.Option(
+    False,
+    "--strict",
+    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
+    )
 ) -> None:
     """
     Deletes the specified networks (Target) from the source list (Input).
@@ -41,7 +46,7 @@ def exclude(
         if target_path.exists() and target_path.is_file():
             try:
                 # Читаем файл исключений. Комментарии здесь не важны, нужны только сети.
-                exclude_list = list(read_networks(target_path))
+                exclude_list = list(read_networks(target_path, strict=strict))
                 console.print(f"[dim]Loaded {len(exclude_list)} exclusion rules.[/dim]")
             except Exception as e:
                 console.print(f"[red]Error reading exclusion file: {e}[/red]")
@@ -49,7 +54,7 @@ def exclude(
         else:
             # Если это не файл, пробуем распарсить как одиночный префикс
             try:
-                net = normalize_prefix(target)
+                net = normalize_prefix(target, strict=strict)
                 exclude_list = [net]
             except ValueError:
                 console.print(f"[red]Error: '{target}' is not a valid IP prefix or file.[/red]")
@@ -65,16 +70,16 @@ def exclude(
                  sys.exit(1)
             
             # Читаем файл, сохраняя привязку "Сеть -> Комментарий"
-            for net, comm in read_prefixes_with_comments(input_file):
+            for net, comm in read_prefixes_with_comments(input_file, strict=strict):
                 source_prefixes.append(net)
                 if comm:
                     comments_map[net] = comm
         else:
             # Обычный режим: читаем из файла или STDIN
             if input_file:
-                source_prefixes = list(read_networks(input_file))
+                source_prefixes = list(read_networks(input_file, strict=strict))
             elif not sys.stdin.isatty():
-                source_prefixes = list(read_stream(sys.stdin))
+                source_prefixes = list(read_stream(sys.stdin, strict=strict))
             else:
                 console.print("[red]Error: No input provided.[/red]")
                 sys.exit(1)

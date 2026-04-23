@@ -111,7 +111,7 @@ def parse_ipv4_ranges(text: str) -> List[IPv4Network]:
     return cidr_results
 
 
-def normalize_single_ip(candidate: str) -> Union[IPv4Network, IPv6Network, None]:
+def normalize_single_ip(candidate: str, strict: bool = False) -> Union[IPv4Network, IPv6Network, None]:
     """
     Превращает грязную строку в чистый объект IP-сети.
     
@@ -124,135 +124,117 @@ def normalize_single_ip(candidate: str) -> Union[IPv4Network, IPv6Network, None]
     Returns:
         Объект сети или None, если парсинг невозможен.
     """
-    # 1. Счастливый путь: пробуем стандартный парсер
+    if strict:
+        if "/" in candidate:
+            try:
+                return ipaddress.ip_network(candidate, strict=True)
+            except ValueError as exc:
+                try:
+                    corrected = ipaddress.ip_network(candidate, strict=False)
+                except ValueError:
+                    return None
+                raise ValueError(
+                    f"Invalid network '{candidate}': host bits are set. "
+                    f"Did you mean '{corrected}'?"
+                ) from exc
+        else:
+            try:
+                ip = ipaddress.ip_address(candidate)
+                if ip.version == 4:
+                    return ipaddress.IPv4Network(f"{ip}/32", strict=False)
+                return ipaddress.IPv6Network(f"{ip}/128", strict=False)
+            except ValueError:
+                return None
+
     try:
         return ipaddress.ip_network(candidate, strict=False)
     except ValueError:
         pass
 
-    # 2. Чистим ведущие нули
-    if '.' in candidate and ':' not in candidate:
+    if "." in candidate and ":" not in candidate:
         try:
-            parts = candidate.split('/')
+            parts = candidate.split("/")
             ip_part = parts[0]
             mask_part = f"/{parts[1]}" if len(parts) > 1 else ""
-            
-            # Разбиваем по точкам, превращаем в int (убирает 0), собираем обратно
-            clean_ip = ".".join(str(int(octet)) for octet in ip_part.split('.'))
+            clean_ip = ".".join(str(int(octet)) for octet in ip_part.split("."))
             clean_candidate = f"{clean_ip}{mask_part}"
-            
             return ipaddress.ip_network(clean_candidate, strict=False)
         except (ValueError, IndexError):
             pass
 
-    # 3. Одиночные IP без маски
     try:
-        # Повторяем чистку нулей для хоста
-        if '.' in candidate and ':' not in candidate:
-             clean_ip = ".".join(str(int(octet)) for octet in candidate.split('.'))
-             ip = ipaddress.ip_address(clean_ip)
+        if "." in candidate and ":" not in candidate:
+            clean_ip = ".".join(str(int(octet)) for octet in candidate.split("."))
+            ip = ipaddress.ip_address(clean_ip)
         else:
-             ip = ipaddress.ip_address(candidate)
+            ip = ipaddress.ip_address(candidate)
 
-        # Превращаем хост в сеть /32 или /128
         if ip.version == 4:
             return ipaddress.IPv4Network(f"{ip}/32", strict=False)
-        else:
-            return ipaddress.IPv6Network(f"{ip}/128", strict=False)
+        return ipaddress.IPv6Network(f"{ip}/128", strict=False)
     except ValueError:
-        # Это точно не IP (например, "Version 1.0")
         return None
 
 
-def extract_prefixes_from_text(text: str) -> List[Union[IPv4Network, IPv6Network]]:
-    """
-    Универсальный экстрактор.
-    
-    Вытаскивает все IP-адреса из строки, игнорируя текст вокруг.
-    Это основа всеядности утилиты.
-    """
+def extract_prefixes_from_text(
+    text: str,
+    strict: bool = False
+) -> List[Union[IPv4Network, IPv6Network]]:
     prefixes: List[Union[IPv4Network, IPv6Network]] = []
 
-    # 1. Сначала ищем диапазоны (1.1.1.1 - 1.1.1.5)
-    # Это важно сделать, чтобы получить правильные CIDR.
-    # Найденные здесь сети уже являются объектами, нормализация не нужна.
     ranges = parse_ipv4_ranges(text)
     prefixes.extend(ranges)
 
-    # 2. Ищем обычные IP и CIDR
     all_candidates = parse_ipv4(text) + parse_ipv6(text)
 
     for candidate in all_candidates:
         if not candidate:
             continue
-        # Нормализация превратит строки в объекты
-        network = normalize_single_ip(candidate)
+        network = normalize_single_ip(candidate, strict=strict)
         if network is not None:
             prefixes.append(network)
 
-    # Примечание: В списке prefixes могут оказаться дубликаты.
-    # Например, если в тексте было "10.0.0.1 - 10.0.0.1", range вернет 10.0.0.1/32,
-    # и parse_ipv4 тоже вернет 10.0.0.1/32.
-    # Это НОРМАЛЬНО. Дубликаты будут удалены на этапе оптимизации (process_prefixes).
-    return prefixes 
+    return prefixes
 
 # --- Универсальный читатель ---
 
 def _parse_lines_generator(
-    line_iterator: Iterator[str], 
-    progress: Union[Progress, None] = None, 
-    task_id: Union[TaskID, None] = None
+    line_iterator: Iterator[str],
+    progress: Union[Progress, None] = None,
+    task_id: Union[TaskID, None] = None,
+    strict: bool = False,
 ) -> Generator[Union[IPv4Network, IPv6Network], None, None]:
-    """
-    Ядро чтения. Берет любой поток строк (файл или STDIN) и выдает объекты IP.
-    
-    Yields:
-        Объекты IPv4Network / IPv6Network.
-    """
     for line_num, line in enumerate(line_iterator, 1):
-        
-        # Если кто-то загнал в пайп бесконечный /dev/urandom
         if line_num > MAX_LINE_COUNT:
             raise ValueError(f"Input exceeds the safety limit of {MAX_LINE_COUNT} lines.")
 
-        # Обновляем прогресс
         if progress and task_id is not None:
-            # Считаем байты приблизительно, так как line может быть декодирована
-            line_bytes = len(line.encode('utf-8')) + 1
+            line_bytes = len(line.encode("utf-8")) + 1
             progress.update(task_id, advance=line_bytes)
-        
+
         line = line.strip()
-        # Игнорируем пустые строки и комментарии
-        if not line or line.startswith('#'):
+        if not line or line.startswith("#"):
             continue
 
-        # Используем экстрактор. Он найдет IP даже если это строка JSON или CSV
-        prefixes = extract_prefixes_from_text(line)
-        
+        try:
+            prefixes = extract_prefixes_from_text(line, strict=strict)
+        except ValueError as exc:
+            raise ValueError(f"Line {line_num}: {exc}") from exc
+
         if prefixes:
             for prefix in prefixes:
                 yield prefix
         else:
-            # Если regex не справился (очень редкий случай),
-            # пробуем скормить строку целиком в ipaddress
             try:
-                yield ipaddress.ip_network(line, strict=False)
+                yield ipaddress.ip_network(line, strict=strict)
             except ValueError:
-                # Молча пропускаем мусор
                 pass
 
 
-def _parse_comments_generator(line_iterator: Iterator[str]) -> Generator[Tuple[Union[IPv4Network, IPv6Network], str], None, None]:
-    """
-    Внутреннее ядро для парсинга строк с комментариями.
-    Разделяет логику парсинга от логики открытия файлов.
-    
-    Args:
-        line_iterator: Поток строк (файл или STDIN).
-    
-    Yields:
-        Кортеж (IPNet, Comment).
-    """
+def _parse_comments_generator(
+    line_iterator: Iterator[str],
+    strict: bool = False,
+) -> Generator[Tuple[Union[IPv4Network, IPv6Network], str], None, None]:
     for line_num, line in enumerate(line_iterator, 1):
         if line_num > MAX_LINE_COUNT:
             raise ValueError(f"Input exceeds safety limit of {MAX_LINE_COUNT} lines.")
@@ -261,34 +243,36 @@ def _parse_comments_generator(line_iterator: Iterator[str]) -> Generator[Tuple[U
         if not line_stripped:
             continue
 
-        # 1. Отделяем комментарий
-        if '#' in line:
-            content, comment_raw = line.split('#', 1)
+        if "#" in line:
+            content, comment_raw = line.split("#", 1)
             cleaned_comment = comment_raw.strip()
-            # Форматируем комментарий, чтобы он всегда начинался с #
             comment = f"# {cleaned_comment}" if cleaned_comment else ""
         else:
             content = line
             comment = ""
 
-        # 2. Ищем IP в части до комментария
-        prefixes = extract_prefixes_from_text(content)
-        
-        # Если в одной строке несколько IP (например, "1.1.1.1, 2.2.2.2 # servers"),
-        # то комментарий привязывается ко всем найденным IP.
+        try:
+            prefixes = extract_prefixes_from_text(content, strict=strict)
+        except ValueError as exc:
+            raise ValueError(f"Line {line_num}: {exc}") from exc
+
         for p in prefixes:
             yield (p, comment)
 
 
 # --- File Specific Readers ---
 
-def _read_txt_generator(path: Path, progress: Progress, task_id: TaskID) -> Generator[Union[IPv4Network, IPv6Network], None, None]:
-    """Обертка для чтения TXT файлов."""
+def _read_txt_generator(
+    path: Path,
+    progress: Progress,
+    task_id: TaskID,
+    strict: bool = False
+) -> Generator[Union[IPv4Network, IPv6Network], None, None]:
     with open(path, 'r', encoding='utf-8') as f:
-        yield from _parse_lines_generator(f, progress, task_id)
+        yield from _parse_lines_generator(f, progress, task_id, strict=strict)
 
 
-def _read_csv_generator(path: Path, progress: Progress, task_id: TaskID, column_name: str = 'prefix') -> Generator[Union[IPv4Network, IPv6Network], None, None]:
+def _read_csv_generator(path: Path, progress: Progress, task_id: TaskID, column_name: str = 'prefix', strict: bool = False) -> Generator[Union[IPv4Network, IPv6Network], None, None]:
     """Обертка для чтения CSV (учитывает колонки)."""
     with open(path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
@@ -310,12 +294,18 @@ def _read_csv_generator(path: Path, progress: Progress, task_id: TaskID, column_
                     yield network
             else:
                 try:
-                    yield ipaddress.ip_network(prefix_text, strict=False)
+                    yield ipaddress.ip_network(prefix_text, strict=strict)
                 except ValueError:
                     pass
 
 
-def _read_json_generator(path: Path, progress: Progress, task_id: TaskID, key_name: str = 'prefixes') -> Generator[Union[IPv4Network, IPv6Network], None, None]:
+def _read_json_generator(
+    path: Path,
+    progress: Progress,
+    task_id: TaskID,
+    key_name: str = 'prefixes',
+    strict: bool = False
+) -> Generator[Union[IPv4Network, IPv6Network], None, None]:
     """Потоковое чтение JSON."""
     with open(path, 'rb') as f:
         wrapped_file = ProgressFileWrapper(f, progress, task_id)
@@ -328,13 +318,13 @@ def _read_json_generator(path: Path, progress: Progress, task_id: TaskID, key_na
                     raise ValueError(f"JSON array exceeds the limit of {MAX_LINE_COUNT} items.")
                 
                 prefix_text = str(item).strip()
-                extracted = extract_prefixes_from_text(prefix_text)
+                extracted = extract_prefixes_from_text(prefix_text, strict=strict)
                 if extracted:
                     for network in extracted:
                         yield network
                 else:
                     try:
-                        yield ipaddress.ip_network(prefix_text, strict=False)
+                        yield ipaddress.ip_network(prefix_text, strict=strict)
                     except ValueError:
                         print(f"Warning: Invalid prefix '{prefix_text}' in JSON", file=sys.stderr)
         except ijson.JSONError:
@@ -343,11 +333,8 @@ def _read_json_generator(path: Path, progress: Progress, task_id: TaskID, key_na
 
 # --- Public API ---
 
-def read_stream(stream: TextIO) -> Iterator[Union[IPv4Network, IPv6Network]]:
-    """
-    Чтение из стандартного ввода (STDIN / Pipe).
-    """
-    yield from _parse_lines_generator(stream)
+def read_stream(stream: TextIO, strict: bool = False) -> Iterator[Union[IPv4Network, IPv6Network]]:
+    yield from _parse_lines_generator(stream, strict=strict)
 
 
 def read_stream_with_comments(stream: TextIO) -> Generator[Tuple[Union[IPv4Network, IPv6Network], str], None, None]:
@@ -360,7 +347,11 @@ def read_stream_with_comments(stream: TextIO) -> Generator[Tuple[Union[IPv4Netwo
     yield from _parse_comments_generator(stream)
 
 
-def read_networks(file_path: Union[str, Path], show_progress: bool = True) -> Iterator[Union[IPv4Network, IPv6Network]]:
+def read_networks(
+    file_path: Union[str, Path],
+    show_progress: bool = True,
+    strict: bool = False
+) -> Iterator[Union[IPv4Network, IPv6Network]]:
     """
     Чтение из файла на диске с автоматическим определением формата.
     """
@@ -386,13 +377,16 @@ def read_networks(file_path: Union[str, Path], show_progress: bool = True) -> It
         
         task_id = progress.add_task(f"Reading {path.name}", total=file_size)
 
-        if extension == '.json':
-            yield from _read_json_generator(path, progress, task_id)
+        if extension == ".json":
+            yield from _read_json_generator(path, progress, task_id, strict=strict)
         else:
-            yield from _read_txt_generator(path, progress, task_id)
+            yield from _read_txt_generator(path, progress, task_id, strict=strict)
 
 
-def read_prefixes_with_comments(file_path: Path) -> Generator[Tuple[Union[IPv4Network, IPv6Network], str], None, None]:
+def read_prefixes_with_comments(
+    file_path: Path,
+    strict: bool = False
+) -> Generator[Tuple[Union[IPv4Network, IPv6Network], str], None, None]:
     """
     Чтение файла с сохранением комментариев.
     """
@@ -400,5 +394,5 @@ def read_prefixes_with_comments(file_path: Path) -> Generator[Tuple[Union[IPv4Ne
     if path.stat().st_size > MAX_FILE_SIZE_BYTES:
         raise ValueError(f"File too large for merge with comments.")
 
-    with open(file_path, 'r', encoding='utf-8') as f:
-        yield from _parse_comments_generator(f)
+    with open(file_path, "r", encoding="utf-8") as f:
+        yield from _parse_comments_generator(f, strict=strict)

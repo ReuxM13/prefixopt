@@ -31,7 +31,12 @@ def merge(
         "--format", "-f",
         help="Output format: 'list' (1 per line) or 'csv' (single line, comma-separated)"
     ),
-    keep_comments: bool = typer.Option(False, "--keep-comments", help="Preserve comments. Disables aggregation and CSV format.")
+    keep_comments: bool = typer.Option(False, "--keep-comments", help="Preserve comments. Disables aggregation and CSV format."),
+    strict: bool = typer.Option(
+    False,
+    "--strict",
+    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
+    )
 ) -> None:
     """
     Combines two files with IP prefixes.
@@ -68,10 +73,10 @@ def merge(
                             unique_map[ip_str] = comment
 
             # 1. Читаем первый файл прямо в словарь (минуя создание огромных списков)
-            process_stream(read_prefixes_with_comments(file1))
+            process_stream(read_prefixes_with_comments(file1, strict=strict))
 
             # 2. Читаем второй файл прямо в словарь
-            process_stream(read_prefixes_with_comments(file2))
+            process_stream(read_prefixes_with_comments(file2, strict=strict))
 
             # Восстанавливаем объекты IP для корректной сортировки
             merged_list: List[Tuple[IPNet, str]] = []
@@ -106,8 +111,8 @@ def merge(
 
         else:
             # Используем list() для загрузки генераторов в память, чтобы объединить их
-            prefixes1 = list(read_networks(file1))
-            prefixes2 = list(read_networks(file2))
+            prefixes1 = list(read_networks(file1, strict=strict))
+            prefixes2 = list(read_networks(file2, strict=strict))
             all_prefixes = prefixes1 + prefixes2
 
             # Запускаем полный цикл оптимизации через Pipeline
@@ -200,6 +205,11 @@ def intersect(
         OutputFormat.list,
         "--format", "-f",
         help="Output format: 'list' (1 per line) or 'csv' (single line, comma-separated)"
+    ),
+    strict: bool = typer.Option(
+    False,
+    "--strict",
+    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
     )
 ) -> None:
     """
@@ -212,8 +222,8 @@ def intersect(
     """
     try:
         # 1. Загрузка данных
-        list1 = list(read_networks(file1))
-        list2 = list(read_networks(file2))
+        list1 = list(read_networks(file1, strict=strict))
+        list2 = list(read_networks(file2, strict=strict))
         
         name1 = file1.name
         name2 = file2.name

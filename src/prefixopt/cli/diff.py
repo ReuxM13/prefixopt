@@ -37,6 +37,11 @@ def diff(
     mode: DiffMode = typer.Option(DiffMode.changes, "--mode", "-m", help="Display mode: changes (default), added, removed, unchanged, all"),
     ipv6_only: bool = typer.Option(False, "--ipv6-only", help="Process IPv6 prefixes only"),
     ipv4_only: bool = typer.Option(False, "--ipv4-only", help="Process IPv4 prefixes only"),
+    strict: bool = typer.Option(
+    False,
+    "--strict",
+    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
+    )
 ) -> None:
     """
     Compares two prefix files and shows the changes.
@@ -47,7 +52,7 @@ def diff(
     try:
         def prepare(path: Path) -> Iterable[IPNet]:
             """Вспомогательная функция: Чтение + Пайплайн."""
-            raw = read_networks(path)
+            raw = read_networks(path, strict=strict)
             return process_prefixes(
                 raw, 
                 sort=True, 

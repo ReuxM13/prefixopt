@@ -13,36 +13,43 @@ from ipaddress import IPv4Network, IPv6Network
 IPNet = Union[IPv4Network, IPv6Network]
 
 
-def normalize_prefix(s: str) -> IPNet:
-    """
-    Нормализует строку в объект IP-сети.
+def normalize_prefix(s: str, strict: bool = False) -> IPNet:
+    s = s.strip()
 
-    Умеет обрабатывать как сети с маской ("10.0.0.0/8"), так и одиночные IP ("10.0.0.1"),
-    автоматически добавляя маску /32 или /128.
+    if strict:
+        if "/" in s:
+            try:
+                return ipaddress.ip_network(s, strict=True)
+            except ValueError as exc:
+                try:
+                    corrected = ipaddress.ip_network(s, strict=False)
+                except ValueError:
+                    raise ValueError(f"Cannot normalize '{s}' to an IP network") from exc
 
-    Args:
-        s: Строковое представление адреса или сети.
+                raise ValueError(
+                    f"Invalid network '{s}': host bits are set. Did you mean '{corrected}'?"
+                ) from exc
 
-    Returns:
-        Объект IPv4Network или IPv6Network.
-
-    Raises:
-        ValueError: Если строка не является валидным IP-адресом или сетью.
-    """
-    try:
-        # Сначала пробуем стандартное преобразование
-        return ipaddress.ip_network(s, strict=False)
-    except ValueError:
-        # Если не вышло, возможно это одиночный IP без маски.
-        # Пробуем распарсить как адрес и превратить в хост-сеть.
         try:
             ip = ipaddress.ip_address(s)
-            if ip.version == 4:
-                return ipaddress.IPv4Network(f"{ip}/32", strict=False)
-            else:
-                return ipaddress.IPv6Network(f"{ip}/128", strict=False)
-        except ValueError:
-            raise ValueError(f"Cannot normalize '{s}' to an IP network")
+        except ValueError as exc:
+            raise ValueError(f"Cannot normalize '{s}' to an IP network") from exc
+
+        if ip.version == 4:
+            return ipaddress.IPv4Network(f"{ip}/32", strict=False)
+        return ipaddress.IPv6Network(f"{ip}/128", strict=False)
+
+    try:
+        return ipaddress.ip_network(s, strict=False)
+    except ValueError:
+        try:
+            ip = ipaddress.ip_address(s)
+        except ValueError as exc:
+            raise ValueError(f"Cannot normalize '{s}' to an IP network") from exc
+
+        if ip.version == 4:
+            return ipaddress.IPv4Network(f"{ip}/32", strict=False)
+        return ipaddress.IPv6Network(f"{ip}/128", strict=False)
 
 
 def get_version(net: IPNet) -> Literal[4, 6]:

@@ -25,6 +25,11 @@ def filter(
         OutputFormat.list,
         "--format", "-f",
         help="Output format: 'list' (1 per line) or 'csv' (single line, comma-separated)"
+    ),
+    strict: bool = typer.Option(
+    False,
+    "--strict",
+    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
     )
 ) -> None:
     """
@@ -32,9 +37,9 @@ def filter(
     """
     try:
         if input_file:
-            all_prefixes = list(read_networks(input_file))
+            all_prefixes = list(read_networks(input_file, strict=strict))
         elif not sys.stdin.isatty():
-            all_prefixes = list(read_stream(sys.stdin))
+            all_prefixes = list(read_stream(sys.stdin, strict=strict))
         else:
             console.print("[red]Error: No input provided.[/red]")
             sys.exit(1)

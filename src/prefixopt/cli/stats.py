@@ -17,17 +17,22 @@ from ..core.ip_counter import get_prefix_statistics
 
 def stats(
     input_file: Optional[Path] = typer.Argument(None, help="Input file (optional if using pipe/stdin)"),
-    show_details: bool = typer.Option(False, "--details", "-d", help="Show detailed statistics")
+    show_details: bool = typer.Option(False, "--details", "-d", help="Show detailed statistics"),
+    strict: bool = typer.Option(
+    False,
+    "--strict",
+    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
+    )
 ) -> None:
     """
     Displays statistics on a list of IP prefixes.
     """
     try:
         if input_file:
-            prefixes = list(read_networks(input_file))
+            prefixes = list(read_networks(input_file, strict=strict))
             source_name = input_file.name
         elif not sys.stdin.isatty():
-            prefixes = list(read_stream(sys.stdin))
+            prefixes = list(read_stream(sys.stdin, strict=strict))
             source_name = "STDIN"
         else:
             console.print("[red]Error: No input provided.[/red]")
