@@ -337,14 +337,17 @@ def read_stream(stream: TextIO, strict: bool = False) -> Iterator[Union[IPv4Netw
     yield from _parse_lines_generator(stream, strict=strict)
 
 
-def read_stream_with_comments(stream: TextIO) -> Generator[Tuple[Union[IPv4Network, IPv6Network], str], None, None]:
+def read_stream_with_comments(
+    stream: TextIO,
+    strict: bool = False
+) -> Generator[Tuple[Union[IPv4Network, IPv6Network], str], None, None]:
     """
     Чтение из STDIN с сохранением комментариев.
     
     Используется для команд optimize --keep-comments и merge, 
     когда данные поступают через пайп.
     """
-    yield from _parse_comments_generator(stream)
+    yield from _parse_comments_generator(stream, strict=strict)
 
 
 def read_networks(
