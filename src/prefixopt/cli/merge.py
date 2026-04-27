@@ -1,19 +1,24 @@
 """
 Модуль команд слияния и пересечения для CLI.
 
-Предоставляет функциональность для объединения (merge) нескольких списков
-префиксов с опциональным сохранением комментариев, а также для поиска
-пересечений (intersect) и перекрытий между двумя списками.
+Содержит две команды:
+
+1. merge
+   Объединение нескольких списков префиксов в один.
+   Поддерживает сохранение комментариев и аннотацию источников.
+
+2. intersect
+   Поиск пересечений между двумя файлами или внутри одного файла.
+   Поддерживает расчет Coverage и отображение источника перекрытий.
 """
 import sys
 import ipaddress
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple, Generator
-from rich.table import Table
+from typing import Optional, List, Dict, Tuple, Generator, Set
 
 import typer
+from rich.table import Table
 
-# Локальные импорты
 from .common import OutputFormat, handle_output, console
 from ..data.file_reader import read_networks, read_prefixes_with_comments
 from ..core.pipeline import process_prefixes
@@ -22,116 +27,83 @@ from ..core.ip_utils import IPNet
 from ..core.ip_counter import count_unique_ips
 
 
-def merge(
-    file1: Path = typer.Argument(..., help="First input file with IP prefixes"),
-    file2: Path = typer.Argument(..., help="Second input file with IP prefixes"),
-    output_file: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
-    format: OutputFormat = typer.Option(
-        OutputFormat.list,
-        "--format", "-f",
-        help="Output format: 'list' (1 per line) or 'csv' (single line, comma-separated)"
-    ),
-    keep_comments: bool = typer.Option(False, "--keep-comments", help="Preserve comments. Disables aggregation and CSV format."),
-    strict: bool = typer.Option(
-    False,
-    "--strict",
-    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
-    )
-) -> None:
+def _split_comment_parts(comment: str) -> List[str]:
     """
-    Combines two files with IP prefixes.
+    Разбивает строку комментария на отдельные логические части.
 
-    Команда поддерживает два режима работы:
-    1. Стандартный (Оптимизация): Списки загружаются, объединяются, сортируются,
-       очищаются от вложенностей и агрегируются.
-    2. Режим --keep-comments: Используется для слияния списков "белого доступа"
-       или конфигов с комментариями.
-       - Агрегация и удаление вложенных сетей ОТКЛЮЧАЮТСЯ (чтобы не потерять
-         привязку комментария к конкретной подсети).
-       - Выполняется дедупликация (удаление полных дублей IP).
-       - Используется потоковая обработка для экономии памяти.
+    Формат комментария:
+        # part1 | part2 | part3
+
+    Символ '#' в начале удаляется, пробелы вокруг каждой части обрезаются.
+    Пустые части игнорируются.
+
+    Args:
+        comment: Строка комментария (может начинаться с '#').
+
+    Returns:
+        Список непустых текстовых фрагментов.
     """
-    try:
-        # Проверка на конфликт: CSV не поддерживает комментарии
-        if keep_comments and format == OutputFormat.csv:
-            console.print("[red]Error: Cannot use --keep-comments with CSV format.[/red]")
-            sys.exit(1)
+    if not comment:
+        return []
 
-        if keep_comments:        
-            # Словарь для дедупликации: ключ - строковый IP, значение - комментарий.
-            unique_map: Dict[str, str] = {}
-            
-            # Вспомогательная функция для обработки потока
-            def process_stream(stream: Generator[Tuple[IPNet, str], None, None]) -> None:
-                for ip, comment in stream:
-                    ip_str = str(ip)
-                    if ip_str not in unique_map:
-                        unique_map[ip_str] = comment
-                    else:
-                        # Если у существующего нет коммента, а у нового есть - обновляем
-                        if not unique_map[ip_str] and comment:
-                            unique_map[ip_str] = comment
+    raw = comment.strip()
+    if raw.startswith("#"):
+        raw = raw[1:].strip()
 
-            # 1. Читаем первый файл прямо в словарь (минуя создание огромных списков)
-            process_stream(read_prefixes_with_comments(file1, strict=strict))
+    if not raw:
+        return []
 
-            # 2. Читаем второй файл прямо в словарь
-            process_stream(read_prefixes_with_comments(file2, strict=strict))
+    parts = [part.strip() for part in raw.split("|")]
+    return [part for part in parts if part]
 
-            # Восстанавливаем объекты IP для корректной сортировки
-            merged_list: List[Tuple[IPNet, str]] = []
-            for ip_str_key, comm in unique_map.items():
-                net_obj = ipaddress.ip_network(ip_str_key, strict=False)
-                merged_list.append((net_obj, comm))
 
-            # Сортировка Broadest First (аналогично ядру)
-            # Ключ: (Версия, Адрес, Маска)
-            merged_list.sort(key=lambda item: (
-                item[0].version,
-                int(item[0].network_address),
-                item[0].prefixlen
-            ))
+def _merge_comment_strings(*comments: str) -> str:
+    """
+    Объединяет несколько комментариев в одну строку.
 
-            # Формирование текстового вывода
-            lines = []
-            for ip_obj, comment in merged_list:
-                if comment:
-                    lines.append(f"{ip_obj} {comment}")
-                else:
-                    lines.append(str(ip_obj))
+    Дубликаты удаляются, порядок первого вхождения сохраняется.
+    Результат форматируется как:
+        # part1 | part2 | part3
 
-            content = "\n".join(lines) + "\n"
+    Args:
+        *comments: Произвольное количество строк комментариев.
 
-            if output_file:
-                with open(output_file, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                console.print(f"[green]Merged {len(lines)} prefixes (with comments) to {output_file}[/green]")
-            else:
-                print(content, end="")
+    Returns:
+        Объединенная строка или пустая строка, если частей нет.
+    """
+    merged_parts: List[str] = []
+    seen: Set[str] = set()
 
-        else:
-            # Используем list() для загрузки генераторов в память, чтобы объединить их
-            prefixes1 = list(read_networks(file1, strict=strict))
-            prefixes2 = list(read_networks(file2, strict=strict))
-            all_prefixes = prefixes1 + prefixes2
+    for comment in comments:
+        for part in _split_comment_parts(comment):
+            if part not in seen:
+                seen.add(part)
+                merged_parts.append(part)
 
-            # Запускаем полный цикл оптимизации через Pipeline
-            processed_prefixes = process_prefixes(
-                all_prefixes,
-                sort=True,           # Всегда сортируем при слиянии
-                remove_nested=True,  # Чистим вложенность
-                aggregate=True       # Склеиваем соседей
-            )
+    if not merged_parts:
+        return ""
 
-            # Материализуем результат
-            processed_list = list(processed_prefixes)
+    return f"# {' | '.join(merged_parts)}"
 
-            # Передаем результат в обработчик вывода
-            handle_output(processed_list, format, output_file)
 
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        sys.exit(1)
+def _comment_from_text(text: Optional[str]) -> str:
+    """
+    Превращает произвольную пользовательскую строку в нормализованный комментарий.
+
+    Args:
+        text: Текст от пользователя (может быть None или пустым).
+
+    Returns:
+        Строка формата '# text' или пустая строка.
+    """
+    if not text:
+        return ""
+
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+
+    return f"# {cleaned}"
 
 
 def _find_overlaps_linear(
@@ -139,14 +111,14 @@ def _find_overlaps_linear(
     sorted_list2: List[IPNet]
 ) -> List[Tuple[IPNet, IPNet]]:
     """
-    Ищет пересечения между двумя уже отсортированными списками сетей.
+    Ищет пересечения между двумя отсортированными списками сетей.
 
-    Функция используется в режиме сравнения двух разных файлов.
-    Возвращает пары сетей, которые пересекаются между собой.
+    Алгоритм использует два указателя, двигающихся по спискам синхронно.
+    Сложность O(N + M) после сортировки.
 
     Args:
-        sorted_list1: Первый отсортированный список сетей.
-        sorted_list2: Второй отсортированный список сетей.
+        sorted_list1: Первый отсортированный список.
+        sorted_list2: Второй отсортированный список.
 
     Returns:
         Список пар (net_from_list1, net_from_list2), которые пересекаются.
@@ -194,16 +166,16 @@ def _find_overlaps_linear(
 
 def _find_self_overlaps(sorted_list: List[IPNet]) -> List[Tuple[IPNet, IPNet]]:
     """
-    Ищет пересечения внутри одного отсортированного списка сетей.
+    Ищет пересечения внутри одного отсортированного списка.
 
-    Используется в режиме самопроверки, когда команда intersect вызвана
-    только с одним файлом.
+    Для каждого элемента проверяет последующие, пока они могут пересекаться
+    с текущим (пока начало следующего не уйдет за конец текущего).
 
     Args:
         sorted_list: Отсортированный список сетей.
 
     Returns:
-        Список пар сетей из одного и того же списка, которые пересекаются.
+        Список пар сетей, которые пересекаются внутри списка.
     """
     overlaps: List[Tuple[IPNet, IPNet]] = []
     length = len(sorted_list)
@@ -228,6 +200,152 @@ def _find_self_overlaps(sorted_list: List[IPNet]) -> List[Tuple[IPNet, IPNet]]:
     return overlaps
 
 
+def merge(
+    file1: Path = typer.Argument(..., help="First input file with IP prefixes"),
+    file2: Path = typer.Argument(..., help="Second input file with IP prefixes"),
+    output_file: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
+    format: OutputFormat = typer.Option(
+        OutputFormat.list,
+        "--format", "-f",
+        help="Output format: 'list' (1 per line) or 'csv' (single line, comma-separated)"
+    ),
+    keep_comments: bool = typer.Option(
+        False,
+        "--keep-comments",
+        help="Preserve comments. Disables aggregation and CSV format."
+    ),
+    append_comment: Optional[str] = typer.Option(
+        None,
+        "--append-comment",
+        help="Append this comment to prefixes coming from the first file. Works only with --keep-comments."
+    )
+) -> None:
+    """
+    Combines two files with IP prefixes.
+
+    Команда поддерживает три режима работы:
+
+    1. Стандартный режим
+       Списки загружаются, объединяются, сортируются,
+       очищаются от вложенностей и агрегируются.
+
+    2. Режим --keep-comments
+       Используется для слияния списков, где важно сохранить
+       комментарии, привязанные к конкретным строкам.
+       В этом режиме агрегация и удаление вложенных сетей отключены.
+       Работает только дедупликация и сортировка.
+
+    3. Режим --keep-comments + --append-comment
+       Файл 2 считается базовым.
+       Комментарии из файла 2 сохраняются.
+       Для префиксов из файла 1 дополнительно добавляется указанный
+       комментарий из --append-comment.
+       Если префикс уже есть в файле 2, комментарии объединяются
+       в одну строку без дублей.
+    """
+    try:
+        if keep_comments and format == OutputFormat.csv:
+            console.print("[red]Error: Cannot use --keep-comments with CSV format.[/red]")
+            sys.exit(1)
+
+        if append_comment and not keep_comments:
+            console.print("[red]Error: --append-comment works only with --keep-comments.[/red]")
+            sys.exit(1)
+
+        if keep_comments:
+            unique_map: Dict[str, str] = {}
+
+            if append_comment:
+                annotation_comment = _comment_from_text(append_comment)
+
+                # Сначала загружаем файл 2 (база) — он имеет приоритет по комментариям
+                for ip, comment in read_prefixes_with_comments(file2):
+                    ip_str = str(ip)
+                    if ip_str not in unique_map:
+                        unique_map[ip_str] = comment
+                    else:
+                        unique_map[ip_str] = _merge_comment_strings(unique_map[ip_str], comment)
+
+                # Затем загружаем файл 1 (новые данные) и добавляем аннотацию
+                for ip, comment in read_prefixes_with_comments(file1):
+                    ip_str = str(ip)
+                    merged_comment = _merge_comment_strings(comment, annotation_comment)
+
+                    if ip_str in unique_map:
+                        unique_map[ip_str] = _merge_comment_strings(unique_map[ip_str], merged_comment)
+                    else:
+                        unique_map[ip_str] = merged_comment
+
+            else:
+                # Обычный --keep-comments без аннотации
+                def process_stream(stream: Generator[Tuple[IPNet, str], None, None]) -> None:
+                    for ip, comment in stream:
+                        ip_str = str(ip)
+                        if ip_str not in unique_map:
+                            unique_map[ip_str] = comment
+                        else:
+                            if not unique_map[ip_str] and comment:
+                                unique_map[ip_str] = comment
+
+                process_stream(read_prefixes_with_comments(file1))
+                process_stream(read_prefixes_with_comments(file2))
+
+            # Конвертируем словарь обратно в список объектов для сортировки
+            merged_list: List[Tuple[IPNet, str]] = []
+            for ip_str_key, comm in unique_map.items():
+                net_obj = ipaddress.ip_network(ip_str_key, strict=False)
+                merged_list.append((net_obj, comm))
+
+            merged_list.sort(key=lambda item: (
+                item[0].version,
+                int(item[0].network_address),
+                item[0].prefixlen
+            ))
+
+            # Формируем текстовый вывод
+            lines = []
+            for ip_obj, comment in merged_list:
+                if comment:
+                    lines.append(f"{ip_obj} {comment}")
+                else:
+                    lines.append(str(ip_obj))
+
+            content = "\n".join(lines) + "\n"
+
+            if output_file:
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+                if append_comment:
+                    console.print(
+                        f"[green]Merged {len(lines)} prefixes with annotation to {output_file}[/green]"
+                    )
+                else:
+                    console.print(
+                        f"[green]Merged {len(lines)} prefixes (with comments) to {output_file}[/green]"
+                    )
+            else:
+                print(content, end="")
+
+        else:
+            # Стандартный режим: полная оптимизация
+            prefixes1 = list(read_networks(file1))
+            prefixes2 = list(read_networks(file2))
+            all_prefixes = prefixes1 + prefixes2
+
+            processed_prefixes = process_prefixes(
+                all_prefixes,
+                sort=True,
+                remove_nested=True,
+                aggregate=True
+            )
+            handle_output(list(processed_prefixes), format, output_file)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
 def intersect(
     file1: Path = typer.Argument(..., help="First input file (Source A)"),
     file2: Optional[Path] = typer.Argument(None, help="Second input file (Source B). If omitted, checks file1 against itself."),
@@ -237,17 +355,22 @@ def intersect(
         "--format", "-f",
         help="Output format: 'list' (1 per line) or 'csv' (single line, comma-separated)"
     ),
-    strict: bool = typer.Option(False, "--strict", help="Fail on invalid network addresses with host bits set.")
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Fail on invalid network addresses with host bits set."
+    )
 ) -> None:
     """
     Finds intersections and calculates coverage ratio.
-    If only one file is given, checks for internal overlaps within that file.
+
+    Если указан только один файл, проверяет внутренние пересечения (self-check).
+    Если указаны два файла, сравнивает их между собой и выводит статистику покрытия.
     """
     try:
         list1 = list(read_networks(file1, strict=strict))
         name1 = file1.name
 
-        # Определяем режим работы
         self_mode = file2 is None
 
         if self_mode:
@@ -270,16 +393,13 @@ def intersect(
         sorted1 = sort_networks(list1)
 
         if self_mode:
-            # Режим самопроверки: ищем пересечения внутри одного списка
-            common_prefixes = set()  # В self-mode точных "совпадений" не ищем (всё совпадет)
+            common_prefixes: Set[IPNet] = set()
             raw_overlaps = _find_self_overlaps(sorted1)
         else:
-            # Стандартный режим: два файла
             common_prefixes = set1.intersection(set2)
             sorted2 = sort_networks(list2)
             raw_overlaps = _find_overlaps_linear(sorted1, sorted2)
 
-        # Формируем список частичных перекрытий
         partial_overlaps: List[Tuple[IPNet, IPNet, str, str]] = []
 
         for net1, net2 in raw_overlaps:
@@ -306,7 +426,6 @@ def intersect(
 
         volume_intersection = count_unique_ips(intersection_fragments) if intersection_fragments else 0
 
-        # Вывод результатов
         should_print_details = output_file is not None or format == OutputFormat.list
 
         if should_print_details:
