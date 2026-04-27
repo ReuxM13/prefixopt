@@ -7,23 +7,23 @@
 
 ## Description
 
-`prefixopt` is a tool for network engineers and security specialists. It allows automating routine tasks for processing IP address lists: removing duplicates, aggregating subnets, filtering garbage (Bogons), finding intersections, semantically comparing lists, as well as excluding one or more subnets/addresses from a list.
+``prefixopt` is a high-performance CLI tool designed for network engineers and security specialists. It automates routine tasks associated with managing large IP prefix lists: removing duplicates, aggregating subnets (CIDR summarization), filtering bogons, finding intersections, performing semantic diffs, and executing network subtraction (hole punching).
 
-Allows organizing scattered lists of IP addresses:
-- Optimization: Automatic removal of duplicates and nested networks (e.g., removing /32 if a covering /24 exists).
-- Aggregation: Merging adjacent subnets into supernet.
-- Filtering: Cleaning lists from Bogons, private networks (RFC1918), Loopback, and Multicast.
-- Subtraction: Excluding specific addresses or subnets from the general list with automatic range splitting.
-- Comparison: Semantic comparison of two lists (shows which subnets were added or removed).
-- Versatility: The parser automatically extracts prefixes from any text files (logs, equipment configurations, CSV, JSON).
-- Pipe Support (STDIN): Supports UNIX-way pipelining. You can pass data via standard input instead of files.
+It helps organize and clean up messy IP address lists:
+- **Optimization:** Automatically removes duplicates and nested networks (e.g., drops a `/32` if a covering `/24` exists).
+- **Aggregation:** Merges adjacent subnets into a single supernet where mathematically possible.
+- **Filtering:** Cleans lists by removing Bogons, Private networks (RFC 1918), Loopbacks, and Multicast addresses.
+- **Subtraction:** Excludes specific addresses or subnets from a master list, automatically splitting networks into smaller fragments.
+- **Comparison:** Semantically compares two lists, accurately showing which subnets were added or removed regardless of their CIDR representation.
+- **Versatility:** The parser automatically extracts IPs, CIDRs, and IP ranges (e.g., `10.0.0.1 - 10.0.0.50`) from any text-based format (logs, router configs, CSVs without headers, JSON).
+- **Pipe Support (STDIN):** Fully supports the UNIX philosophy. You can pass data via standard input instead of files.
   Supported commands: `optimize`, `filter`, `stats`, `check`, `split`, `exclude`.
   Example: `cat logs.txt | prefixopt optimize`
 
 ### Who is the utility for?
-Operations Engineers (Ops): optimize, add, merge, stats.
-Security guards (Sec): diff (audit), intersect (conflicts), filter (clearing feeds).
-Pentesters / Researchers: exclude (scope management), split (goal preparation), check.
+- **Operations Engineers (Ops):** `optimize`, `add`, `merge`, `stats`.
+- **Security Analysts (Blue Team):** `diff` (infrastructure audit), `intersect` (rule conflict analysis), `filter` (threat feed sanitization).
+- **Pentesters & Researchers (Red Team):** `exclude` (scope management), `split` (target slicing for scanners), `check`.
 
 ---
 
@@ -47,11 +47,31 @@ source venv/bin/activate # Linux
 pip install -e .
 ```
 
-## Usage example
+## Quick Examples
 
 <p align="left">
   <img src="static\usage.png" alt="prefixopt using" width="100%">
 </p>
+
+```bash
+# Clean and aggregate a messy list
+prefixopt optimize messy_ips.txt -o clean_acls.txt
+
+# Merge two lists while preserving line comments (#) and avoiding aggregation
+prefixopt merge list1.txt list2.txt --keep-comments
+
+# Tag all new prefixes from list1 during a merge
+prefixopt merge list1.txt base.txt --keep-comments --append-comment "Client X"
+
+# Find overlaps between two files (or internal overlaps within a single file)
+prefixopt intersect blacklist.txt whitelist.txt
+
+# Subtract a scope (prohibit scanning of specific IPs)
+prefixopt exclude out_of_scope.txt target_scope.txt
+
+# Strictly validate a list (fail if host bits are set in a network address)
+prefixopt optimize config.txt --strict
+```
 
 ---
 
@@ -73,7 +93,7 @@ The architecture is built on a modular principle (Core / CLI / Data).
 | **`optimize`** | `Aggr(Sort(Set(A)))` | **Compression**<br>Shrink ACLs, remove duplicates. | CIDR List | Performs full cycle: Sort - Remove Nested - Aggregate. |
 | **`add`** | `Optimize(A + {new})` | **Editing**<br>Add a new IP and re-optimize immediately. | CIDR List | Automatically merges the new item into existing subnets. |
 | **`filter`** | `A - {Bogons}` | **Sanitization**<br>Remove private, local, and reserved IPs. | Clean List | Does *not* aggregate, only removes unwanted items. |
-| **`merge`** | `Optimize(A ∪ B ...)` | **Union**<br>Combine multiple feeds into one master list. | CIDR List | Supports `--keep-comments` (deduplication without aggregation). |
+| **`merge`** | `Optimize(A ∪ B ...)` | **Union**<br>Combine multiple feeds into one master list. | CIDR List | Supports --keep-comments (deduplication without aggregation) and --append-comment. |
 | **`intersect`** | `A ∩ B` | **Conflict Analysis**<br>Find common zones or overlapping rules. | Report<br>(Exact + Partial) | Visualizes exactly which prefix from Source A overlaps with Source B. |
 | **`exclude`** | `A \ B` | **Subtraction**<br>Remove whitelist from blacklist. | Fragments List | Mathematically punches holes in networks, splitting them. |
 | **`diff`** | `(B \ A) ∪ (A \ B)` | **Audit**<br>What changed since the last version? | Patch (`+`, `-`, `=`) | Semantic comparison (understands that two `/24` equal one `/23`). |
