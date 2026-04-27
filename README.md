@@ -7,7 +7,7 @@
 
 ## Description
 
-``prefixopt` is a high-performance CLI tool designed for network engineers and security specialists. It automates routine tasks associated with managing large IP prefix lists: removing duplicates, aggregating subnets (CIDR summarization), filtering bogons, finding intersections, performing semantic diffs, and executing network subtraction (hole punching).
+`prefixopt` is a high-performance CLI tool designed for network engineers and security specialists. It automates routine tasks associated with managing large IP prefix lists: removing duplicates, aggregating subnets (CIDR summarization), filtering bogons, finding intersections, performing semantic diffs, and executing network subtraction (hole punching).
 
 It helps organize and clean up messy IP address lists:
 - **Optimization:** Automatically removes duplicates and nested networks (e.g., drops a `/32` if a covering `/24` exists).
