@@ -12,16 +12,16 @@ from ipaddress import IPv4Network, IPv6Network, IPv4Address, IPv6Address
 
 from .common import console
 from ..data.file_reader import read_networks, read_stream
-from ..core.ip_counter import get_prefix_statistics
+from ..core.ip_counter import get_prefix_statistics, get_duplicate_prefixes
 
 
 def stats(
     input_file: Optional[Path] = typer.Argument(None, help="Input file (optional if using pipe/stdin)"),
     show_details: bool = typer.Option(False, "--details", "-d", help="Show detailed statistics"),
     strict: bool = typer.Option(
-    False,
-    "--strict",
-    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
+        False,
+        "--strict",
+        help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
     )
 ) -> None:
     """
@@ -39,6 +39,7 @@ def stats(
             sys.exit(1)
         
         statistics = get_prefix_statistics(prefixes)
+        duplicates = get_duplicate_prefixes(prefixes)
 
         table = Table(title=f"Statistics for {source_name}")
         table.add_column("Metric", style="cyan")
@@ -65,6 +66,17 @@ def stats(
             detail_table.add_row("IPv6 prefixes", str(ipv6_count))
             console.print(detail_table)
 
+            if duplicates:
+                console.print("\n[bold yellow]Duplicate Prefixes[/bold yellow]")
+                dup_table = Table()
+                dup_table.add_column("Prefix", style="yellow")
+                dup_table.add_column("Count", justify="right", style="magenta")
+                for prefix, count in sorted(duplicates, key=lambda x: x[1], reverse=True):
+                    dup_table.add_row(prefix, str(count))
+                console.print(dup_table)
+            else:
+                console.print("[dim]No duplicate prefixes found.[/dim]")
+
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
@@ -88,7 +100,6 @@ def check(
             console.print(f"[red]Error: Invalid IP address or prefix {ip_or_prefix}[/red]")
             sys.exit(1)
 
-        # Ленивое чтение
         if input_file:
             prefixes = read_networks(input_file)
         elif not sys.stdin.isatty():

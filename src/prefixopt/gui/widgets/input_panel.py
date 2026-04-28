@@ -4,7 +4,7 @@
 from pathlib import Path
 from typing import Optional, Union
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QRadioButton,
     QButtonGroup, QFileDialog, QLineEdit, QPlainTextEdit, QStackedWidget, QGroupBox,
@@ -34,17 +34,29 @@ class InputPanel(QWidget):
         self._selected_file: Optional[Path] = None
         self._detach_btn: Optional[QPushButton] = None
         self._detach_manager: Optional[DetachableWidgetManager] = None
+        self._group_box: Optional[QGroupBox] = None
         self._init_ui()
 
     def title(self) -> str:
-        return self._title
+        return self._group_box.title() if self._group_box else self._title
+
+    def set_title(self, new_title: str) -> None:
+        """Меняет заголовок группы."""
+        if self._group_box:
+            self._group_box.setTitle(new_title)
+
+    def display_name(self) -> Optional[str]:
+        """Возвращает имя файла (без пути), если выбран файл, иначе None."""
+        if self._selected_file:
+            return self._selected_file.name
+        return None
 
     def _init_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
-        group = QGroupBox(self._title)
-        group_layout = QVBoxLayout(group)
+        self._group_box = QGroupBox(self._title)
+        group_layout = QVBoxLayout(self._group_box)
 
         toolbar = QHBoxLayout()
         toolbar.addStretch()
@@ -67,7 +79,6 @@ class InputPanel(QWidget):
 
         self.stack = QStackedWidget()
 
-        # --- File page ---
         self.file_page = QWidget()
         file_layout = QVBoxLayout(self.file_page)
 
@@ -93,7 +104,6 @@ class InputPanel(QWidget):
         file_layout.addLayout(file_row)
         file_layout.addWidget(self.drop_hint)
 
-        # --- Text page ---
         self.text_page = QWidget()
         text_layout = QVBoxLayout(self.text_page)
 
@@ -109,7 +119,7 @@ class InputPanel(QWidget):
         group_layout.addLayout(toolbar)
         group_layout.addLayout(mode_layout)
         group_layout.addWidget(self.stack)
-        root.addWidget(group)
+        root.addWidget(self._group_box)
 
         self.file_mode_radio.toggled.connect(self._update_mode)
         self.setAcceptDrops(True)

@@ -3,7 +3,7 @@
 """
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QPlainTextEdit, QPushButton
 
 from .output_panel import OutputPanel
@@ -14,6 +14,7 @@ class SplitOutputPanel(QWidget):
     """
     Панель, содержащая две области: верхнюю для структурированного отчёта (только текст)
     и нижнюю — OutputPanel с кнопками Save/Copy/Clear.
+    При запуске обе области показываются минимального размера.
     """
 
     def __init__(
@@ -51,14 +52,20 @@ class SplitOutputPanel(QWidget):
         self.output_panel = OutputPanel(title=self._output_title)
         self.splitter.addWidget(self.output_panel)
 
-        self.splitter.setStretchFactor(0, 7)
-        self.splitter.setStretchFactor(1, 3)
+        # Разрешаем сжиматься до нуля
+        self.report_edit.setMinimumHeight(0)
+        self.output_panel.setMinimumHeight(0)
+
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 7)
+
+        # После завершения компоновки сжимаем панели до минимального размера
+        QTimer.singleShot(0, lambda: self.splitter.setSizes([0, 0]))
 
         layout.addWidget(self.splitter)
 
         self._detach_manager = DetachableWidgetManager(self, self._detach_btn)
 
-    # Методы для отчёта и вывода остаются без изменений
     def set_report_text(self, text: str) -> None:
         self.report_edit.setPlainText(text)
 

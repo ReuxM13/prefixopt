@@ -69,7 +69,14 @@ class StatsTab(BaseOperationTab):
         self.threadpool.start(worker)
 
     def _on_stats_result(self, result: StatsResult) -> None:
-        self.table.setRowCount(7)
+        show = self.show_details.isChecked()
+        row_count = 6  # базовые строки
+        if show:
+            row_count += 1  # для ipv4/ipv6
+            if result.duplicates:
+                row_count += 1  # для общего количества дубликатов
+
+        self.table.setRowCount(row_count)
         self.table.setItem(0, 0, QTableWidgetItem("Original prefix count"))
         self.table.setItem(0, 1, QTableWidgetItem(str(result.original_prefix_count)))
         self.table.setItem(1, 0, QTableWidgetItem("Optimized prefix count"))
@@ -82,11 +89,28 @@ class StatsTab(BaseOperationTab):
         self.table.setItem(4, 1, QTableWidgetItem(f"{result.unique_ips:,}"))
         self.table.setItem(5, 0, QTableWidgetItem("Addresses saved"))
         self.table.setItem(5, 1, QTableWidgetItem(f"{result.addresses_saved:,}"))
-        self.table.setItem(6, 0, QTableWidgetItem("IPv4 / IPv6 count"))
-        self.table.setItem(6, 1, QTableWidgetItem(f"{result.ipv4_count} / {result.ipv6_count}"))
+
+        detail_lines = []
+        if show:
+            self.table.setItem(6, 0, QTableWidgetItem("IPv4 / IPv6 count"))
+            self.table.setItem(6, 1, QTableWidgetItem(f"{result.ipv4_count} / {result.ipv6_count}"))
+            if result.duplicates:
+                self.table.setItem(7, 0, QTableWidgetItem("Duplicate prefixes"))
+                self.table.setItem(7, 1, QTableWidgetItem(str(len(result.duplicates))))
+                detail_lines.append("Duplicate Prefixes:")
+                for prefix, count in result.duplicates:
+                    detail_lines.append(f"  {prefix}  ({count} times)")
+            else:
+                self.table.setRowCount(row_count - 1)  # убрали лишнюю строку, если дубликатов нет
+        else:
+            detail_lines.append("Details hidden. Enable 'Show details' to see IPv4/IPv6 counts and duplicate prefixes.")
+
         self.table.resizeColumnsToContents()
 
-        self.output_panel.set_text(f"Stats computed. {result.original_prefix_count} prefixes -> {result.optimized_prefix_count} after optimization.")
+        if detail_lines:
+            self.output_panel.set_text("\n".join(detail_lines))
+        else:
+            self.output_panel.clear()
         self.progress_panel.set_status("Done")
 
     def _on_error(self, error_msg: str) -> None:

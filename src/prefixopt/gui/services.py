@@ -4,8 +4,6 @@
 Принимает параметры от GUI, вызывает ядро prefixopt
 и возвращает структурированные результаты (models.py).
 
-Этот слой не использует rich, typer и console.print.
-Он не знает ничего о визуальном представлении.
 """
 import ipaddress
 from pathlib import Path
@@ -29,6 +27,7 @@ from .models import (
     FilterResult,
     MergeResult,
     IntersectReport,
+    MultiIntersectReport,
     DiffReport,
     ExcludeResult,
     SplitResult,
@@ -645,6 +644,10 @@ def run_stats(source: InputSource, strict: bool = False) -> StatsResult:
     ipv4_count = len([p for p in data if p.version == 4])
     ipv6_count = len([p for p in data if p.version == 6])
 
+    # Добавляем дубликаты
+    from prefixopt.core.ip_counter import get_duplicate_prefixes
+    duplicates = get_duplicate_prefixes(data)
+
     return StatsResult(
         original_prefix_count=raw_stats["original_prefix_count"],
         optimized_prefix_count=raw_stats["optimized_prefix_count"],
@@ -654,6 +657,7 @@ def run_stats(source: InputSource, strict: bool = False) -> StatsResult:
         addresses_saved=raw_stats["addresses_saved"],
         ipv4_count=ipv4_count,
         ipv6_count=ipv6_count,
+        duplicates=[(str(p), c) for p, c in duplicates],
     )
 
 
@@ -690,4 +694,58 @@ def run_check(
         target=target,
         found=len(containing) > 0,
         containing_networks=containing,
+    )
+
+
+def run_multi_intersect(
+    *sources: InputSource,
+    strict: bool = False,
+    source_names: Optional[List[str]] = None,
+) -> MultiIntersectReport:
+    """
+    Находит префиксы, присутствующие хотя бы в одном из источников, и строит карту присутствия.
+    Возвращает полный список всех префиксов и карту, без фильтрации.
+    """
+    if len(sources) < 2:
+        raise ValueError("Multi-intersect requires at least 2 sources")
+
+    # Загружаем и оптимизируем каждый источник
+    lists = []
+    volumes = []
+    for source in sources:
+        raw = _load_networks(source, strict=strict)
+        optimized = list(process_prefixes(raw, sort=True, remove_nested=True, aggregate=True))
+        lists.append(optimized)
+        volumes.append(count_unique_ips(optimized))
+
+    num_sources = len(sources)
+    if source_names is None:
+        source_names = [f"Source {i+1}" for i in range(num_sources)]
+
+    # Частотный словарь: prefix_str -> количество источников
+    freq: Dict[str, int] = {}
+    for lst in lists:
+        for net in lst:
+            key = str(net)
+            freq[key] = freq.get(key, 0) + 1
+
+    # Карта присутствия: prefix_str -> список индексов источников, где встречается
+    sets = [set(lst) for lst in lists]
+    presence_map: Dict[str, List[int]] = {}
+    for key in freq:
+        presence_map[key] = [idx for idx in range(num_sources) if key in {str(n) for n in sets[idx]}]
+
+    # Все уникальные префиксы (ключи словаря)
+    all_prefixes = [ipaddress.ip_network(key, strict=False) for key in freq]
+    all_prefixes = sort_networks(all_prefixes)
+
+    intersection_volume = count_unique_ips(all_prefixes) if all_prefixes else 0
+
+    return MultiIntersectReport(
+        common_prefixes=all_prefixes,
+        presence_map=presence_map,
+        volumes=volumes,
+        intersection_volume=intersection_volume,
+        source_names=source_names,
+        source_count=num_sources,
     )

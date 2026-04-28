@@ -1,9 +1,5 @@
 """
 Модели данных для GUI.
-
-Каждая модель соответствует результату одной операции.
-Сервисный слой возвращает эти объекты,
-а GUI-вкладки их отображают.
 """
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Union
@@ -13,8 +9,6 @@ from ..core.ip_utils import IPNet
 
 @dataclass
 class OptimizeResult:
-    """Результат команды optimize или add."""
-
     prefixes: List[IPNet] = field(default_factory=list)
     commented_prefixes: List[Tuple[IPNet, str]] = field(default_factory=list)
     keep_comments: bool = False
@@ -24,8 +18,6 @@ class OptimizeResult:
 
 @dataclass
 class FilterResult:
-    """Результат команды filter."""
-
     prefixes: List[IPNet] = field(default_factory=list)
     original_count: int = 0
     removed_count: int = 0
@@ -33,8 +25,6 @@ class FilterResult:
 
 @dataclass
 class MergeResult:
-    """Результат команды merge."""
-
     prefixes: List[IPNet] = field(default_factory=list)
     commented_prefixes: List[Tuple[IPNet, str]] = field(default_factory=list)
     keep_comments: bool = False
@@ -43,8 +33,6 @@ class MergeResult:
 
 @dataclass
 class IntersectReport:
-    """Результат команды intersect."""
-
     exact_matches: List[IPNet] = field(default_factory=list)
     partial_overlaps: List[Tuple[IPNet, IPNet, str, str]] = field(default_factory=list)
     volume1: int = 0
@@ -61,9 +49,17 @@ class IntersectReport:
 
 
 @dataclass
-class DiffReport:
-    """Результат команды diff."""
+class MultiIntersectReport:
+    common_prefixes: List[IPNet] = field(default_factory=list)
+    presence_map: Dict[str, List[int]] = field(default_factory=dict)
+    volumes: List[int] = field(default_factory=list)
+    intersection_volume: int = 0
+    source_names: List[str] = field(default_factory=list)
+    source_count: int = 0
 
+
+@dataclass
+class DiffReport:
     added: List[IPNet] = field(default_factory=list)
     removed: List[IPNet] = field(default_factory=list)
     unchanged: List[IPNet] = field(default_factory=list)
@@ -71,8 +67,6 @@ class DiffReport:
 
 @dataclass
 class ExcludeResult:
-    """Результат команды exclude."""
-
     prefixes: List[IPNet] = field(default_factory=list)
     commented_prefixes: List[Tuple[IPNet, str]] = field(default_factory=list)
     keep_comments: bool = False
@@ -81,16 +75,12 @@ class ExcludeResult:
 
 @dataclass
 class SplitResult:
-    """Результат команды split."""
-
     subnets: List[IPNet] = field(default_factory=list)
     total_count: int = 0
 
 
 @dataclass
 class StatsResult:
-    """Результат команды stats."""
-
     original_prefix_count: int = 0
     optimized_prefix_count: int = 0
     compression_ratio_percent: float = 0.0
@@ -99,12 +89,11 @@ class StatsResult:
     addresses_saved: int = 0
     ipv4_count: int = 0
     ipv6_count: int = 0
+    duplicates: List[Tuple[str, int]] = field(default_factory=list)
 
 
 @dataclass
 class CheckResult:
-    """Результат команды check."""
-
     target: str = ""
     found: bool = False
     containing_networks: List[IPNet] = field(default_factory=list)

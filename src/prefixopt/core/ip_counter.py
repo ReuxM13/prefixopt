@@ -4,11 +4,11 @@
 Содержит функции для подсчета количества адресов, уникальных IP,
 а также расчета коэффициента сжатия списков.
 """
-from typing import List, Dict, Union, Iterable
+from typing import List, Dict, Union, Iterable, Tuple
+from collections import Counter
 
 from ipaddress import IPv4Network, IPv6Network
 
-# Локальные импорты операций ядра
 from .operations.aggregator import aggregate
 from .operations.sorter import sort_networks
 from .operations.nested import remove_nested
@@ -111,3 +111,14 @@ def get_prefix_statistics(prefixes: List[Union[IPv4Network, IPv6Network]]) -> Di
         "unique_ips": unique_ips,
         "addresses_saved": original_total_ips - unique_ips
     }
+
+
+def get_duplicate_prefixes(
+    prefixes: Iterable[Union[IPv4Network, IPv6Network]]
+) -> List[Tuple[str, int]]:
+    """
+    Возвращает список дубликатов (префикс, количество повторений) для префиксов,
+    встреченных более одного раза.
+    """
+    counts = Counter(str(p) for p in prefixes)
+    return [(prefix, count) for prefix, count in counts.items() if count > 1]
