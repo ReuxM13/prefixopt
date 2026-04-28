@@ -1,0 +1,693 @@
+"""
+Сервисный слой GUI.
+
+Принимает параметры от GUI, вызывает ядро prefixopt
+и возвращает структурированные результаты (models.py).
+
+Этот слой не использует rich, typer и console.print.
+Он не знает ничего о визуальном представлении.
+"""
+import ipaddress
+from pathlib import Path
+from typing import Union, Optional, List, Tuple, Iterable, Iterator
+
+from ..core.ip_utils import IPNet, normalize_prefix, is_subnet_of
+from ..core.pipeline import process_prefixes
+from ..core.operations.sorter import sort_networks
+from ..core.operations.subtractor import subtract_networks
+from ..core.operations.subnetter import split_network
+from ..core.operations.diff import calculate_diff
+from ..core.ip_counter import count_unique_ips, get_prefix_statistics
+from ..data.file_reader import (
+    read_networks,
+    extract_prefixes_from_text,
+    read_prefixes_with_comments,
+)
+
+from .models import (
+    OptimizeResult,
+    FilterResult,
+    MergeResult,
+    IntersectReport,
+    DiffReport,
+    ExcludeResult,
+    SplitResult,
+    StatsResult,
+    CheckResult,
+)
+
+
+# Тип входных данных для сервисов:
+# Path к файлу или строка с текстом.
+InputSource = Union[Path, str]
+
+
+def _load_networks(
+    source: InputSource,
+    strict: bool = False,
+) -> Iterator[IPNet]:
+    """
+    Загружает сети из файла или текстовой строки.
+
+    Args:
+        source: Путь к файлу или текст с префиксами.
+        strict: Строгая валидация (host bits).
+
+    Yields:
+        Объекты IPv4Network / IPv6Network.
+    """
+    if isinstance(source, Path):
+        yield from read_networks(source, show_progress=False, strict=strict)
+    else:
+        results = extract_prefixes_from_text(source, strict=strict)
+        if results:
+            yield from results
+
+
+def _load_with_comments(
+    source: InputSource,
+    strict: bool = False,
+) -> Iterator[Tuple[IPNet, str]]:
+    """
+    Загружает сети с комментариями.
+
+    Если источник — файл, читает построчно с сохранением комментариев.
+    Если источник — текст, комментарии сохраняются по тем же правилам.
+
+    Args:
+        source: Путь к файлу или текст.
+        strict: Строгая валидация.
+
+    Yields:
+        Кортеж (IPNet, comment).
+    """
+    if isinstance(source, Path):
+        yield from read_prefixes_with_comments(source, strict=strict)
+    else:
+        for line in source.splitlines():
+            line_stripped = line.strip()
+            if not line_stripped:
+                continue
+
+            comment = ""
+            content = line_stripped
+
+            if "#" in line_stripped:
+                parts = line_stripped.split("#", 1)
+                content = parts[0].strip()
+                raw_comment = parts[1].strip()
+                if raw_comment:
+                    comment = f"# {raw_comment}"
+
+            prefixes = extract_prefixes_from_text(content, strict=strict)
+            for p in prefixes:
+                yield (p, comment)
+
+
+def _deduplicate_commented(
+    source: Iterable[Tuple[IPNet, str]],
+    ipv4_only: bool = False,
+    ipv6_only: bool = False,
+) -> List[Tuple[IPNet, str]]:
+    """
+    Дедупликация префиксов с комментариями.
+
+    Если один и тот же префикс встречается несколько раз,
+    приоритет отдается непустому комментарию.
+
+    Returns:
+        Отсортированный список кортежей (IPNet, comment).
+    """
+    unique_map: dict[str, str] = {}
+
+    for net, comment in source:
+        if ipv4_only and net.version != 4:
+            continue
+        if ipv6_only and net.version != 6:
+            continue
+
+        net_str = str(net)
+
+        if net_str not in unique_map:
+            unique_map[net_str] = comment
+        elif not unique_map[net_str] and comment:
+            unique_map[net_str] = comment
+
+    result: List[Tuple[IPNet, str]] = []
+    for net_str, comm in unique_map.items():
+        net_obj = ipaddress.ip_network(net_str, strict=False)
+        result.append((net_obj, comm))
+
+    result.sort(key=lambda x: (x[0].version, int(x[0].network_address), x[0].prefixlen))
+    return result
+
+
+def run_optimize(
+    source: InputSource,
+    ipv4_only: bool = False,
+    ipv6_only: bool = False,
+    keep_comments: bool = False,
+    strict: bool = False,
+) -> OptimizeResult:
+    """
+    Выполняет оптимизацию списка префиксов.
+
+    В режиме keep_comments выполняется только дедупликация и сортировка.
+    В обычном режиме — полный цикл: сортировка, удаление вложенных, агрегация.
+    """
+    if keep_comments:
+        raw = _load_with_comments(source, strict=strict)
+        commented = _deduplicate_commented(raw, ipv4_only=ipv4_only, ipv6_only=ipv6_only)
+
+        return OptimizeResult(
+            commented_prefixes=commented,
+            keep_comments=True,
+            input_count=len(commented),
+            output_count=len(commented),
+        )
+
+    raw_list = list(_load_networks(source, strict=strict))
+    input_count = len(raw_list)
+
+    result_iter = process_prefixes(
+        raw_list,
+        sort=True,
+        remove_nested=True,
+        aggregate=True,
+        ipv4_only=ipv4_only,
+        ipv6_only=ipv6_only,
+    )
+    result_list = list(result_iter)
+
+    return OptimizeResult(
+        prefixes=result_list,
+        keep_comments=False,
+        input_count=input_count,
+        output_count=len(result_list),
+    )
+
+
+def run_add(
+    source: InputSource,
+    new_prefix: str,
+    keep_comments: bool = False,
+) -> OptimizeResult:
+    """
+    Добавляет новый префикс в список.
+    """
+    net_to_add = normalize_prefix(new_prefix)
+
+    if keep_comments:
+        raw = _load_with_comments(source)
+        commented = _deduplicate_commented(raw)
+
+        exists = any(item[0] == net_to_add for item in commented)
+        if not exists:
+            commented.append((net_to_add, f"# Added manually: {new_prefix}"))
+            commented.sort(key=lambda x: (x[0].version, int(x[0].network_address), x[0].prefixlen))
+
+        return OptimizeResult(
+            commented_prefixes=commented,
+            keep_comments=True,
+            input_count=len(commented),
+            output_count=len(commented),
+        )
+
+    data = list(_load_networks(source))
+    input_count = len(data)
+
+    if net_to_add not in data:
+        data.append(net_to_add)
+
+    result = list(process_prefixes(data, sort=True, remove_nested=True, aggregate=True))
+
+    return OptimizeResult(
+        prefixes=result,
+        keep_comments=False,
+        input_count=input_count + 1,
+        output_count=len(result),
+    )
+
+
+def run_filter(
+    source: InputSource,
+    exclude_private: bool = False,
+    exclude_loopback: bool = False,
+    exclude_link_local: bool = False,
+    exclude_multicast: bool = False,
+    exclude_reserved: bool = False,
+    bogons: bool = False,
+    strict: bool = False,
+) -> FilterResult:
+    """
+    Фильтрует список, удаляя указанные категории сетей.
+    """
+    raw = list(_load_networks(source, strict=strict))
+    original_count = len(raw)
+
+    result_iter = process_prefixes(
+        raw,
+        sort=False,
+        remove_nested=False,
+        aggregate=False,
+        exclude_private=exclude_private,
+        exclude_loopback=exclude_loopback,
+        exclude_link_local=exclude_link_local,
+        exclude_multicast=exclude_multicast,
+        exclude_reserved=exclude_reserved,
+        exclude_unspecified=True,
+        bogons=bogons,
+    )
+    result = list(result_iter)
+
+    return FilterResult(
+        prefixes=result,
+        original_count=original_count,
+        removed_count=original_count - len(result),
+    )
+
+
+def run_merge(
+    source1: InputSource,
+    source2: InputSource,
+    keep_comments: bool = False,
+    append_comment: Optional[str] = None,
+    strict: bool = False,
+) -> MergeResult:
+    """
+    Объединяет два источника данных.
+    """
+    if keep_comments:
+        unique_map: dict[str, str] = {}
+
+        if append_comment:
+            annotation = f"# {append_comment.strip()}" if append_comment.strip() else ""
+
+            for ip, comment in _load_with_comments(source2, strict=strict):
+                ip_str = str(ip)
+                if ip_str not in unique_map:
+                    unique_map[ip_str] = comment
+
+            for ip, comment in _load_with_comments(source1, strict=strict):
+                ip_str = str(ip)
+                parts_existing = set()
+                parts_new = []
+
+                if ip_str in unique_map:
+                    for p in _split_comment(unique_map[ip_str]):
+                        parts_existing.add(p)
+                        parts_new.append(p)
+
+                for p in _split_comment(comment):
+                    if p not in parts_existing:
+                        parts_existing.add(p)
+                        parts_new.append(p)
+
+                for p in _split_comment(annotation):
+                    if p not in parts_existing:
+                        parts_existing.add(p)
+                        parts_new.append(p)
+
+                unique_map[ip_str] = _join_comment(parts_new)
+        else:
+            for ip, comment in _load_with_comments(source1, strict=strict):
+                ip_str = str(ip)
+                if ip_str not in unique_map:
+                    unique_map[ip_str] = comment
+                elif not unique_map[ip_str] and comment:
+                    unique_map[ip_str] = comment
+
+            for ip, comment in _load_with_comments(source2, strict=strict):
+                ip_str = str(ip)
+                if ip_str not in unique_map:
+                    unique_map[ip_str] = comment
+                elif not unique_map[ip_str] and comment:
+                    unique_map[ip_str] = comment
+
+        commented: List[Tuple[IPNet, str]] = []
+        for ip_str, comm in unique_map.items():
+            net = ipaddress.ip_network(ip_str, strict=False)
+            commented.append((net, comm))
+
+        commented.sort(key=lambda x: (x[0].version, int(x[0].network_address), x[0].prefixlen))
+
+        return MergeResult(
+            commented_prefixes=commented,
+            keep_comments=True,
+            total_count=len(commented),
+        )
+
+    list1 = list(_load_networks(source1, strict=strict))
+    list2 = list(_load_networks(source2, strict=strict))
+
+    result = list(process_prefixes(
+        list1 + list2,
+        sort=True,
+        remove_nested=True,
+        aggregate=True,
+    ))
+
+    return MergeResult(
+        prefixes=result,
+        keep_comments=False,
+        total_count=len(result),
+    )
+
+
+def _split_comment(comment: str) -> List[str]:
+    """Разбивает комментарий на части по разделителю |."""
+    if not comment:
+        return []
+    raw = comment.strip()
+    if raw.startswith("#"):
+        raw = raw[1:].strip()
+    if not raw:
+        return []
+    return [p.strip() for p in raw.split("|") if p.strip()]
+
+
+def _join_comment(parts: List[str]) -> str:
+    """Собирает части комментария в строку."""
+    if not parts:
+        return ""
+    return f"# {' | '.join(parts)}"
+
+
+def run_intersect(
+    source1: InputSource,
+    source2: Optional[InputSource] = None,
+    strict: bool = False,
+    name1: str = "Source A",
+    name2: str = "Source B",
+) -> IntersectReport:
+    """
+    Находит пересечения между двумя списками или внутри одного.
+    """
+    list1 = list(_load_networks(source1, strict=strict))
+    self_mode = source2 is None
+
+    if self_mode:
+        list2 = list1
+        name2 = name1
+    else:
+        list2 = list(_load_networks(source2, strict=strict))
+
+    volume1 = count_unique_ips(list1)
+    volume2 = volume1 if self_mode else count_unique_ips(list2)
+
+    sorted1 = sort_networks(list1)
+
+    if self_mode:
+        common: set[IPNet] = set()
+        raw_overlaps = _find_self_overlaps(sorted1)
+    else:
+        set1 = set(list1)
+        set2 = set(list2)
+        common = set1.intersection(set2)
+        sorted2 = sort_networks(list2)
+        raw_overlaps = _find_two_list_overlaps(sorted1, sorted2)
+
+    partial_overlaps: List[Tuple[IPNet, IPNet, str, str]] = []
+
+    for net1, net2 in raw_overlaps:
+        if net1 == net2:
+            continue
+        if net1.subnet_of(net2):  # type: ignore
+            partial_overlaps.append((net1, net2, name1, name2 if not self_mode else name1))
+        elif net2.subnet_of(net1):  # type: ignore
+            partial_overlaps.append((net2, net1, name2 if not self_mode else name1, name1))
+        else:
+            partial_overlaps.append((net1, net2, name1, name2 if not self_mode else name1))
+
+    intersection_fragments: List[IPNet] = list(common)
+    for net1, net2 in raw_overlaps:
+        if net1 == net2:
+            continue
+        if net1.subnet_of(net2):  # type: ignore
+            intersection_fragments.append(net1)
+        elif net2.subnet_of(net1):  # type: ignore
+            intersection_fragments.append(net2)
+
+    volume_intersection = count_unique_ips(intersection_fragments) if intersection_fragments else 0
+
+    cov1 = (volume_intersection / volume1 * 100) if volume1 > 0 else 0.0
+    cov2 = (volume_intersection / volume2 * 100) if volume2 > 0 else 0.0
+
+    all_results = list(common)
+    for sub, parent, _, _ in partial_overlaps:
+        all_results.extend([sub, parent])
+    all_results = sort_networks(list(set(all_results)))
+
+    return IntersectReport(
+        exact_matches=sort_networks(list(common)),
+        partial_overlaps=partial_overlaps,
+        volume1=volume1,
+        volume2=volume2,
+        volume_intersection=volume_intersection,
+        coverage1=cov1,
+        coverage2=cov2,
+        all_a_in_b=(volume1 > 0 and volume_intersection == volume1),
+        all_b_in_a=(volume2 > 0 and volume_intersection == volume2),
+        self_mode=self_mode,
+        name1=name1,
+        name2=name2,
+        all_results=all_results,
+    )
+
+
+def _find_two_list_overlaps(
+    sorted1: List[IPNet],
+    sorted2: List[IPNet],
+) -> List[Tuple[IPNet, IPNet]]:
+    """Линейный поиск пересечений между двумя отсортированными списками."""
+    overlaps: List[Tuple[IPNet, IPNet]] = []
+    i, j = 0, 0
+    len1, len2 = len(sorted1), len(sorted2)
+
+    while i < len1 and j < len2:
+        n1, n2 = sorted1[i], sorted2[j]
+
+        if n1.version < n2.version:
+            i += 1
+            continue
+        if n1.version > n2.version:
+            j += 1
+            continue
+
+        s1, e1 = int(n1.network_address), int(n1.broadcast_address)
+        s2, e2 = int(n2.network_address), int(n2.broadcast_address)
+
+        if max(s1, s2) <= min(e1, e2):
+            overlaps.append((n1, n2))
+            if e1 < e2:
+                i += 1
+            elif e2 < e1:
+                j += 1
+            else:
+                i += 1
+                j += 1
+        elif e1 < s2:
+            i += 1
+        else:
+            j += 1
+
+    return overlaps
+
+
+def _find_self_overlaps(
+    sorted_list: List[IPNet],
+) -> List[Tuple[IPNet, IPNet]]:
+    """Поиск пересечений внутри одного отсортированного списка."""
+    overlaps: List[Tuple[IPNet, IPNet]] = []
+    length = len(sorted_list)
+
+    for i in range(length):
+        net_i = sorted_list[i]
+        end_i = int(net_i.broadcast_address)
+
+        for j in range(i + 1, length):
+            net_j = sorted_list[j]
+
+            if net_i.version != net_j.version:
+                break
+            if int(net_j.network_address) > end_i:
+                break
+
+            overlaps.append((net_i, net_j))
+
+    return overlaps
+
+
+def run_diff(
+    new_source: InputSource,
+    old_source: InputSource,
+    ipv4_only: bool = False,
+    ipv6_only: bool = False,
+    strict: bool = False,
+) -> DiffReport:
+    """
+    Сравнивает два набора данных.
+    """
+    def prepare(src: InputSource) -> List[IPNet]:
+        raw = _load_networks(src, strict=strict)
+        return list(process_prefixes(
+            raw,
+            sort=True,
+            remove_nested=True,
+            aggregate=True,
+            ipv4_only=ipv4_only,
+            ipv6_only=ipv6_only,
+        ))
+
+    new_list = prepare(new_source)
+    old_list = prepare(old_source)
+
+    added, removed, unchanged = calculate_diff(new_list, old_list)
+
+    return DiffReport(
+        added=sort_networks(list(added)),
+        removed=sort_networks(list(removed)),
+        unchanged=sort_networks(list(unchanged)),
+    )
+
+
+def run_exclude(
+    source: InputSource,
+    target: InputSource,
+    keep_comments: bool = False,
+    ipv4_only: bool = False,
+    ipv6_only: bool = False,
+    strict: bool = False,
+) -> ExcludeResult:
+    """
+    Вычитает target из source.
+    """
+    exclude_list = list(_load_networks(target, strict=strict))
+
+    if keep_comments:
+        source_prefixes: List[IPNet] = []
+        comments_map: dict[IPNet, str] = {}
+
+        for net, comm in _load_with_comments(source, strict=strict):
+            source_prefixes.append(net)
+            if comm:
+                comments_map[net] = comm
+
+        raw_result = subtract_networks(source_prefixes, exclude_list)
+        raw_result.sort(key=lambda x: (x.version, int(x.network_address), x.prefixlen))
+
+        commented: List[Tuple[IPNet, str]] = []
+        for fragment in raw_result:
+            inherited = ""
+            if fragment in comments_map:
+                inherited = comments_map[fragment]
+            else:
+                for original in source_prefixes:
+                    if fragment.version == original.version and is_subnet_of(fragment, original):
+                        if original in comments_map:
+                            inherited = comments_map[original]
+                            break
+
+            commented.append((fragment, inherited))
+
+        return ExcludeResult(
+            commented_prefixes=commented,
+            keep_comments=True,
+            total_count=len(commented),
+        )
+
+    source_list = list(_load_networks(source, strict=strict))
+    raw_result = subtract_networks(source_list, exclude_list)
+
+    result = list(process_prefixes(
+        raw_result,
+        sort=True,
+        remove_nested=True,
+        aggregate=True,
+        ipv4_only=ipv4_only,
+        ipv6_only=ipv6_only,
+    ))
+
+    return ExcludeResult(
+        prefixes=result,
+        keep_comments=False,
+        total_count=len(result),
+    )
+
+
+def run_split(
+    source: InputSource,
+    target_length: int,
+    strict: bool = False,
+) -> SplitResult:
+    """
+    Разбивает сети на подсети указанной длины.
+    """
+    all_subnets: List[IPNet] = []
+
+    for net in _load_networks(source, strict=strict):
+        subs = split_network(net, target_length)
+        all_subnets.extend(subs)
+
+    return SplitResult(
+        subnets=all_subnets,
+        total_count=len(all_subnets),
+    )
+
+
+def run_stats(source: InputSource, strict: bool = False) -> StatsResult:
+    """
+    Собирает статистику по списку префиксов.
+    """
+    data = list(_load_networks(source, strict=strict))
+    raw_stats = get_prefix_statistics(data)
+
+    ipv4_count = len([p for p in data if p.version == 4])
+    ipv6_count = len([p for p in data if p.version == 6])
+
+    return StatsResult(
+        original_prefix_count=raw_stats["original_prefix_count"],
+        optimized_prefix_count=raw_stats["optimized_prefix_count"],
+        compression_ratio_percent=raw_stats["compression_ratio_percent"],
+        original_total_ips=raw_stats["original_total_ips"],
+        unique_ips=raw_stats["unique_ips"],
+        addresses_saved=raw_stats["addresses_saved"],
+        ipv4_count=ipv4_count,
+        ipv6_count=ipv6_count,
+    )
+
+
+def run_check(
+    target: str,
+    source: InputSource,
+    strict: bool = False,
+) -> CheckResult:
+    """
+    Проверяет, входит ли target в список source.
+    """
+    try:
+        if "/" in target:
+            check_item = ipaddress.ip_network(target, strict=False)
+        else:
+            check_item = ipaddress.ip_address(target)
+    except ValueError:
+        return CheckResult(target=target, found=False)
+
+    containing: List[IPNet] = []
+
+    for net in _load_networks(source, strict=strict):
+        if net.version != check_item.version:
+            continue
+
+        if isinstance(check_item, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+            if check_item in net:
+                containing.append(net)
+        else:
+            if is_subnet_of(check_item, net):  # type: ignore
+                containing.append(net)
+
+    return CheckResult(
+        target=target,
+        found=len(containing) > 0,
+        containing_networks=containing,
+    )

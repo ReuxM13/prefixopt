@@ -36,15 +36,18 @@ Requires Python 3.9 or higher.
 git clone https://github.com/ReuxM13/prefixopt.git
 cd prefixopt
 
-# Create and activate virtual environment (optional)
+# Create and activate virtual environment (optional but recommended)
 python -m venv venv
 
 # Activate venv
-.\venv\Scripts\activate # Windows
-source venv/bin/activate # Linux
+.\venv\Scripts\activate   # Windows
+source venv/bin/activate  # Linux / macOS
 
-# Install in editable mode (recommended)
+# Install in editable mode (recommended for development)
 pip install -e .
+
+# If you want the graphical interface (GUI) support:
+pip install -e .[gui]
 ```
 
 ## Quick Examples
@@ -71,6 +74,14 @@ prefixopt exclude out_of_scope.txt target_scope.txt
 
 # Strictly validate a list (fail if host bits are set in a network address)
 prefixopt optimize config.txt --strict
+```
+
+## Graphical User Interface (GUI)
+The GUI is an optional component built with PySide6.
+After installing with the [gui] extra, you can launch it with:
+
+```bash
+prefixopt gui
 ```
 
 ---
