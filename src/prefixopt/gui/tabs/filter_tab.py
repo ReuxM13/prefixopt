@@ -115,9 +115,7 @@ class FilterTab(BaseOperationTab):
 
         fmt = self.output_format.currentText()
 
-        self.run_button.setEnabled(False)
-        self.progress_panel.set_busy(True)
-        self.progress_panel.set_status("Running filter...")
+        self._set_running_state("Running filter...")
 
         worker = Worker(
             run_filter,
@@ -163,8 +161,7 @@ class FilterTab(BaseOperationTab):
 
     def _on_finished(self) -> None:
         """Восстанавливает интерфейс."""
-        self.run_button.setEnabled(True)
-        self.progress_panel.set_busy(False)
+        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""

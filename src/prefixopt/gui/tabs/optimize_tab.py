@@ -249,11 +249,8 @@ class OptimizeTab(BaseOperationTab):
         if source is None:
             return
 
-        ipv4_only = self.opt_ipv4_only.isChecked()
-        ipv6_only = self.opt_ipv6_only.isChecked()
-        keep_comments = self.opt_keep_comments.isChecked()
-        strict = self.opt_strict.isChecked()
         output_format = self.opt_format.currentText()
+        keep_comments = self.opt_keep_comments.isChecked()
 
         if keep_comments and output_format == "csv":
             self.output_panel.set_text(
@@ -268,10 +265,10 @@ class OptimizeTab(BaseOperationTab):
             run_optimize,
             source,
             output_format,
-            ipv4_only,
-            ipv6_only,
+            self.opt_ipv4_only.isChecked(),
+            self.opt_ipv6_only.isChecked(),
             keep_comments,
-            strict,
+            self.opt_strict.isChecked(),
         )
         worker.signals.result.connect(self._render_result)
         worker.signals.error.connect(self._on_error)
@@ -279,14 +276,14 @@ class OptimizeTab(BaseOperationTab):
         self.threadpool.start(worker)
 
     def _run_add(self) -> None:
-        """Собирает параметры и запускает задачу добавления префикса в фоновом потоке."""
+        """Собирает параметры и запускает задачу добавления в фоновом потоке."""
         source = self.add_input.get_data_source()
         new_prefix = self.add_prefix_widget.get_value()
         if source is None or new_prefix is None:
             return
 
-        keep_comments = self.add_keep_comments.isChecked()
         output_format = self.add_format.currentText()
+        keep_comments = self.add_keep_comments.isChecked()
 
         if keep_comments and output_format == "csv":
             self.output_panel.set_text(
@@ -333,7 +330,7 @@ class OptimizeTab(BaseOperationTab):
         self.progress_panel.set_status("Error")
 
     def _on_finished(self) -> None:
-        """Восстанавливает интерфейс после завершения фоновой задачи."""
+        """Восстанавливает интерфейс после завершения задачи."""
         self._restore_idle_state()
 
     def trigger_open(self) -> None:

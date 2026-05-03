@@ -105,30 +105,22 @@ class DiffTab(BaseOperationTab):
         )
 
     def _run_diff(self) -> None:
-        """
-        Запускает задачу сравнения в фоновом потоке.
-        """
+        """Запускает задачу сравнения в фоновом потоке."""
         new_source = self.new_input.get_data_source()
         old_source = self.old_input.get_data_source()
 
         if new_source is None or old_source is None:
             return
 
-        ipv4_only = self.ipv4_only.isChecked()
-        ipv6_only = self.ipv6_only.isChecked()
-        strict = self.strict.isChecked()
-
-        self.run_button.setEnabled(False)
-        self.progress_panel.set_busy(True)
-        self.progress_panel.set_status("Calculating diff...")
+        self._set_running_state("Calculating diff...")
 
         worker = Worker(
             run_diff,
             new_source,
             old_source,
-            ipv4_only=ipv4_only,
-            ipv6_only=ipv6_only,
-            strict=strict,
+            ipv4_only=self.ipv4_only.isChecked(),
+            ipv6_only=self.ipv6_only.isChecked(),
+            strict=self.strict.isChecked(),
         )
         worker.signals.result.connect(self._on_diff_result)
         worker.signals.error.connect(self._on_error)
@@ -226,11 +218,8 @@ class DiffTab(BaseOperationTab):
         self.progress_panel.set_status("Error")
 
     def _on_finished(self) -> None:
-        """
-        Восстанавливает состояние интерфейса после завершения задачи.
-        """
-        self.run_button.setEnabled(True)
-        self.progress_panel.set_busy(False)
+        """Восстанавливает интерфейс."""
+        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """

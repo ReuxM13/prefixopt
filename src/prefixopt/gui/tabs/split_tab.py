@@ -85,24 +85,17 @@ class SplitTab(BaseOperationTab):
         )
 
     def _run_split(self) -> None:
-        """
-        Собирает параметры и запускает разбиение в фоновом потоке.
-        """
+        """Собирает параметры и запускает разбиение в фоновом потоке."""
         source = self.input_panel.get_data_source()
         if source is None:
             return
 
-        target_length = self.target_length.value()
+        self._set_running_state("Splitting...")
 
-        self.run_button.setEnabled(False)
-        self.progress_panel.set_busy(True)
-        self.progress_panel.set_status("Splitting...")
-
-        worker = Worker(run_split, source, target_length)
+        worker = Worker(run_split, source, self.target_length.value())
         worker.signals.result.connect(self._on_split_result)
         worker.signals.error.connect(self._on_error)
         worker.signals.finished.connect(self._on_finished)
-
         self.threadpool.start(worker)
 
     def _on_split_result(self, result: SplitResult) -> None:
@@ -129,11 +122,8 @@ class SplitTab(BaseOperationTab):
         self.progress_panel.set_status("Error")
 
     def _on_finished(self) -> None:
-        """
-        Восстанавливает состояние интерфейса после завершения задачи.
-        """
-        self.run_button.setEnabled(True)
-        self.progress_panel.set_busy(False)
+        """Восстанавливает интерфейс."""
+        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """

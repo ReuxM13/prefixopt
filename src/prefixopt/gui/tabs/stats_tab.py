@@ -77,9 +77,7 @@ class StatsTab(BaseOperationTab):
         if source is None:
             return
 
-        self.run_button.setEnabled(False)
-        self.progress_panel.set_busy(True)
-        self.progress_panel.set_status("Calculating stats...")
+        self._set_running_state("Calculating stats...")
 
         worker = Worker(run_stats, source)
         worker.signals.result.connect(self._on_stats_result)
@@ -187,8 +185,7 @@ class StatsTab(BaseOperationTab):
 
     def _on_finished(self) -> None:
         """Восстанавливает интерфейс."""
-        self.run_button.setEnabled(True)
-        self.progress_panel.set_busy(False)
+        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""

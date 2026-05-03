@@ -305,9 +305,7 @@ class IntersectTab(BaseOperationTab):
 
         strict = self.strict.isChecked()
 
-        self.run_button.setEnabled(False)
-        self.progress_panel.set_busy(True)
-        self.progress_panel.set_status("Calculating intersections...")
+        self._set_running_state("Calculating intersections...")
 
         n = len(self._sources)
 
@@ -689,9 +687,8 @@ class IntersectTab(BaseOperationTab):
         self.progress_panel.set_status("Error")
 
     def _on_finished(self) -> None:
-        """Восстанавливает состояние интерфейса."""
-        self.run_button.setEnabled(True)
-        self.progress_panel.set_busy(False)
+        """Восстанавливает интерфейс."""
+        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла для первой незаполненной панели."""
