@@ -69,6 +69,7 @@ class StatsTab(BaseOperationTab):
         self.threadpool.start(worker)
 
     def _on_stats_result(self, result: StatsResult) -> None:
+        self._expand_output()
         show = self.show_details.isChecked()
         row_count = 6  # базовые строки
         if show:

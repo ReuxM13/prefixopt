@@ -72,6 +72,7 @@ class SplitTab(BaseOperationTab):
         self.threadpool.start(worker)
 
     def _on_split_result(self, result: SplitResult) -> None:
+        self._expand_output()
         text = format_prefixes(result.subnets, fmt="list")
         self.output_panel.set_text(text)
         self.progress_panel.set_status(f"Done. Generated {result.total_count} subnets")

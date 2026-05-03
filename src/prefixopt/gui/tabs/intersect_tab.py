@@ -477,6 +477,8 @@ class IntersectTab(BaseOperationTab):
         Args:
             report: Результат анализа пересечений.
         """
+        self._expand_output()
+
         if report.self_mode:
             html = self._build_self_intersect_html(report)
         else:
@@ -502,6 +504,8 @@ class IntersectTab(BaseOperationTab):
         Args:
             report: Результат мульти-пересечения.
         """
+        self._expand_output()
+
         filtered = [
             net for net in report.common_prefixes
             if len(report.presence_map.get(str(net), [])) >= 2

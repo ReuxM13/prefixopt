@@ -157,6 +157,7 @@ class ExcludeTab(BaseOperationTab):
         self.threadpool.start(worker)
 
     def _on_exclude_result(self, result: ExcludeResult) -> None:
+        self._expand_output()
         fmt = self.output_format.currentText()
         try:
             if result.keep_comments and result.commented_prefixes:

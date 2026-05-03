@@ -311,11 +311,12 @@ class OptimizeTab(BaseOperationTab):
 
     def _render_result(self, result: OptimizeResult) -> None:
         """
-        Отображает предварительно отформатированный результат из фонового потока.
+        Отображает предварительно отформатированный результат.
 
         Args:
             result: Результат с готовой строкой formatted_text.
         """
+        self._expand_output()
         self.output_panel.set_text(result.formatted_text)
         self.progress_panel.set_status(
             f"Done. Input: {result.input_count}, Output: {result.output_count}"

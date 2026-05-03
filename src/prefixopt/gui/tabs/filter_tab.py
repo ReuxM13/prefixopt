@@ -121,6 +121,7 @@ class FilterTab(BaseOperationTab):
         self.threadpool.start(worker)
 
     def _on_filter_result(self, result: FilterResult) -> None:
+        self._expand_output()
         fmt = self.output_format.currentText()
         text = format_prefixes(result.prefixes, fmt)
         self.output_panel.set_text(text)

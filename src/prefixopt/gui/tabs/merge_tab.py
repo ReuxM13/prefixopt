@@ -117,6 +117,7 @@ class MergeTab(BaseOperationTab):
         self.threadpool.start(worker)
 
     def _on_merge_result(self, result: MergeResult) -> None:
+        self._expand_output()
         fmt = self.output_format.currentText()
         try:
             if result.keep_comments:

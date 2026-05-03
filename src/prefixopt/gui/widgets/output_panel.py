@@ -36,9 +36,7 @@ def strip_rich_tags(text: str) -> str:
 
 
 class OutputPanel(QWidget):
-    """
-    Панель вывода с действиями сохранения, копирования, очистки и отделения.
-    """
+    """Панель вывода с действиями сохранения, копирования, очистки и отделения."""
 
     def __init__(
         self,
@@ -59,9 +57,7 @@ class OutputPanel(QWidget):
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """
-        Создает структуру панели и подключает действия управления.
-        """
+        """Создает структуру панели и подключает действия."""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
@@ -144,32 +140,23 @@ class OutputPanel(QWidget):
         return self.output_edit.toPlainText()
 
     def clear(self) -> None:
-        """
-        Очищает содержимое области вывода.
-        """
+        """Очищает область вывода."""
         self.output_edit.clear()
 
     def _update_line_count(self) -> None:
-        """
-        Обновляет счетчик строк по текущему plain text содержимому.
-        """
+        """Обновляет счетчик строк."""
         text = self.output_edit.toPlainText()
         if not text:
             self.line_count_label.setText("Lines: 0")
             return
-
         self.line_count_label.setText(f"Lines: {len(text.splitlines())}")
 
     def _copy_to_clipboard(self) -> None:
-        """
-        Копирует текущее содержимое в буфер обмена как plain text.
-        """
+        """Копирует содержимое в буфер обмена как plain text."""
         QApplication.clipboard().setText(self.output_edit.toPlainText())
 
     def _save_to_file(self) -> None:
-        """
-        Сохраняет текущее содержимое в файл как plain text.
-        """
+        """Сохраняет содержимое в файл."""
         text = self.output_edit.toPlainText()
         if not text:
             QMessageBox.information(

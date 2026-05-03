@@ -143,6 +143,7 @@ class DiffTab(BaseOperationTab):
         Args:
             result: Результат сравнения источников.
         """
+        self._expand_output()
         mode = self.mode.currentText()
         summary_only = self.summary_only.isChecked()
 

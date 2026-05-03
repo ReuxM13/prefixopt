@@ -80,6 +80,7 @@ class CheckTab(BaseOperationTab):
         self.threadpool.start(worker)
 
     def _on_check_result(self, result: CheckResult) -> None:
+        self._expand_output()
         if result.found:
             report_lines = [f"✓ '{result.target}' is contained in the following networks:"]
             for net in result.containing_networks:
