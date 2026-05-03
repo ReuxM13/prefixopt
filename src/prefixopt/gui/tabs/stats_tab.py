@@ -77,13 +77,11 @@ class StatsTab(BaseOperationTab):
         if source is None:
             return
 
-        self._set_running_state("Calculating stats...")
-
         worker = Worker(run_stats, source)
         worker.signals.result.connect(self._on_stats_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
+        # worker.signals.finished.connect(self._on_finished)
+        self._start_worker(worker, "...")
 
     def _on_stats_result(self, result: StatsResult) -> None:
         """
@@ -183,9 +181,6 @@ class StatsTab(BaseOperationTab):
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
 
-    def _on_finished(self) -> None:
-        """Восстанавливает интерфейс."""
-        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""

@@ -13,10 +13,13 @@ from PySide6.QtWidgets import QScrollArea, QSplitter, QVBoxLayout, QWidget
 
 from ..widgets.output_panel import OutputPanel
 from ..widgets.progress_panel import ProgressPanel
+from ..workers import Worker
 
 
 class BaseOperationTab(QWidget):
-    """Базовая вкладка операций с адаптивным разделителем и управлением состоянием."""
+    """
+    Базовая вкладка операций с адаптивным разделителем и управлением состоянием.
+    """
 
     _CONTROL_INITIAL_RATIO = 95
     _OUTPUT_INITIAL_RATIO = 5
@@ -50,6 +53,11 @@ class BaseOperationTab(QWidget):
         self.splitter: Optional[QSplitter] = None
         self._result_received = False
         self._is_running = False
+        self._current_worker: Optional[Worker] = None
+
+        self.progress_panel.cancel_button.clicked.connect(
+            self._cancel_current_worker
+        )
 
     def _setup_splitter(self, output_widget: QWidget) -> None:
         """
@@ -78,9 +86,6 @@ class BaseOperationTab(QWidget):
     def _apply_initial_sizes(self) -> None:
         """
         Устанавливает начальные пропорции разделителя.
-
-        Область управления получает почти всю доступную высоту,
-        область вывода остается минимальной.
         """
         if self.splitter is None:
             return
@@ -112,23 +117,25 @@ class BaseOperationTab(QWidget):
         output_height = total - control_height
         self.splitter.setSizes([control_height, output_height])
 
-    def _set_running_state(self, status_text: str) -> None:
+    def _set_running_state(self, status_text: str) -> bool:
         """
         Переводит вкладку в состояние выполнения фоновой задачи.
 
-        Блокирует все элементы управления во избежание изменения
-        параметров и повторного запуска во время обработки.
-
         Args:
             status_text: Текст статуса для панели прогресса.
+
+        Returns:
+            True, если состояние успешно установлено.
+            False, если задача уже выполняется.
         """
         if self._is_running:
-            return
+            return False
 
         self._is_running = True
         self.control_widget.setEnabled(False)
         self.progress_panel.set_busy(True)
         self.progress_panel.set_status(status_text)
+        return True
 
     def _restore_idle_state(self) -> None:
         """
@@ -137,6 +144,59 @@ class BaseOperationTab(QWidget):
         self._is_running = False
         self.control_widget.setEnabled(True)
         self.progress_panel.set_busy(False)
+        self._current_worker = None
+
+    def _start_worker(self, worker: Worker, status_text: str) -> bool:
+        """
+        Регистрирует worker, подключает стандартные сигналы и запускает задачу.
+
+        Сигналы result и error подключаются во вкладке до вызова этого метода.
+
+        Args:
+            worker: Подготовленный worker.
+            status_text: Текст статуса на время выполнения.
+
+        Returns:
+            True, если запуск выполнен.
+            False, если задача уже выполняется.
+        """
+        if not self._set_running_state(status_text):
+            return False
+
+        self._current_worker = worker
+        worker.signals.cancelled.connect(self._on_worker_cancelled)
+        worker.signals.finished.connect(self._on_worker_finished)
+        self.threadpool.start(worker)
+        return True
+
+    def _cancel_current_worker(self) -> None:
+        """
+        Запрашивает мягкую отмену текущей задачи.
+
+        Интерфейс разблокируется сразу.
+        Поздний результат задачи игнорируется worker'ом.
+        """
+        if self._current_worker is None or not self._is_running:
+            return
+
+        worker = self._current_worker
+        worker.cancel()
+
+        self.progress_panel.set_status("Cancelled")
+        self._restore_idle_state()
+
+    def _on_worker_cancelled(self) -> None:
+        """
+        Обрабатывает сигнал отмены worker'а.
+        """
+        self.progress_panel.set_status("Cancelled")
+
+    def _on_worker_finished(self) -> None:
+        """
+        Завершает жизненный цикл текущей фоновой задачи.
+        """
+        if self._is_running:
+            self._restore_idle_state()
 
     def _show_placeholder(self, title: str) -> None:
         """
@@ -185,11 +245,15 @@ class BaseOperationTab(QWidget):
         pass
 
     def trigger_save(self) -> None:
-        """Инициирует сохранение результата через панель вывода."""
+        """
+        Инициирует сохранение результата через панель вывода.
+        """
         if hasattr(self.output_panel, "save_button"):
             self.output_panel.save_button.click()
 
     def trigger_copy(self) -> None:
-        """Инициирует копирование результата через панель вывода."""
+        """
+        Инициирует копирование результата через панель вывода.
+        """
         if hasattr(self.output_panel, "copy_button"):
             self.output_panel.copy_button.click()

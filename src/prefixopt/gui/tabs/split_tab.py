@@ -90,13 +90,12 @@ class SplitTab(BaseOperationTab):
         if source is None:
             return
 
-        self._set_running_state("Splitting...")
 
         worker = Worker(run_split, source, self.target_length.value())
         worker.signals.result.connect(self._on_split_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
+        # worker.signals.finished.connect(self._on_finished)
+        self._start_worker(worker, "...")
 
     def _on_split_result(self, result: SplitResult) -> None:
         """
@@ -121,9 +120,6 @@ class SplitTab(BaseOperationTab):
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
 
-    def _on_finished(self) -> None:
-        """Восстанавливает интерфейс."""
-        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """

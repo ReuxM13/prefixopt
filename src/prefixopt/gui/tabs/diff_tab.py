@@ -112,8 +112,6 @@ class DiffTab(BaseOperationTab):
         if new_source is None or old_source is None:
             return
 
-        self._set_running_state("Calculating diff...")
-
         worker = Worker(
             run_diff,
             new_source,
@@ -124,9 +122,9 @@ class DiffTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._on_diff_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
+        #worker.signals.finished.connect(self._on_finished)
 
-        self.threadpool.start(worker)
+        self._start_worker(worker, "...")
 
     def _on_diff_result(self, result: DiffReport) -> None:
         """
@@ -217,9 +215,6 @@ class DiffTab(BaseOperationTab):
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
 
-    def _on_finished(self) -> None:
-        """Восстанавливает интерфейс."""
-        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """

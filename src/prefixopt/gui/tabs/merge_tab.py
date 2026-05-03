@@ -127,8 +127,6 @@ class MergeTab(BaseOperationTab):
             self.progress_panel.set_status("Error")
             return
 
-        self._set_running_state("Merging...")
-
         worker = Worker(
             run_merge,
             source1,
@@ -140,8 +138,8 @@ class MergeTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._on_merge_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
+        # worker.signals.finished.connect(self._on_finished)
+        self._start_worker(worker, "...")
 
     def _on_merge_result(self, result: MergeResult) -> None:
         """
@@ -166,9 +164,6 @@ class MergeTab(BaseOperationTab):
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
 
-    def _on_finished(self) -> None:
-        """Восстанавливает интерфейс."""
-        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла для первого незаполненного источника."""

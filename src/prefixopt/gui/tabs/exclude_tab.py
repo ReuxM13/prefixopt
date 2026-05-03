@@ -157,7 +157,6 @@ class ExcludeTab(BaseOperationTab):
             self.progress_panel.set_status("Error")
             return
 
-        self._set_running_state("Excluding...")
 
         worker = Worker(
             run_exclude,
@@ -171,8 +170,8 @@ class ExcludeTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._on_exclude_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
+        # worker.signals.finished.connect(self._on_finished)
+        self._start_worker(worker, "...")
 
     def _on_exclude_result(self, result: ExcludeResult) -> None:
         """
@@ -196,10 +195,6 @@ class ExcludeTab(BaseOperationTab):
         """
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
-
-    def _on_finished(self) -> None:
-        """Восстанавливает интерфейс."""
-        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла для источника."""

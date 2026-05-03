@@ -112,6 +112,7 @@ class OptimizeTab(BaseOperationTab):
 
         run_row = QHBoxLayout()
         self.optimize_run_button = QPushButton("Run Optimize")
+        self.optimize_run_button.setProperty("primary", True)
         run_row.addStretch()
         run_row.addWidget(self.optimize_run_button)
 
@@ -160,6 +161,7 @@ class OptimizeTab(BaseOperationTab):
 
         run_row = QHBoxLayout()
         self.add_run_button = QPushButton("Run Add")
+        self.add_run_button.setProperty("primary", True)
         run_row.addStretch()
         run_row.addWidget(self.add_run_button)
 
@@ -222,27 +224,6 @@ class OptimizeTab(BaseOperationTab):
         """Обновляет доступность форматов для режима добавления."""
         self._sync_format_state(self.add_keep_comments, self.add_format)
 
-    def _set_running_state(self, status_text: str) -> None:
-        """
-        Переводит вкладку в состояние выполнения.
-
-        Блокирует кнопки запуска и переключатели режимов.
-        """
-        self.optimize_run_button.setEnabled(False)
-        self.add_run_button.setEnabled(False)
-        self.optimize_radio.setEnabled(False)
-        self.add_radio.setEnabled(False)
-        self.progress_panel.set_busy(True)
-        self.progress_panel.set_status(status_text)
-
-    def _restore_idle_state(self) -> None:
-        """Восстанавливает доступность элементов управления после завершения задачи."""
-        self.optimize_radio.setEnabled(True)
-        self.add_radio.setEnabled(True)
-        self.progress_panel.set_busy(False)
-        self._update_optimize_state()
-        self._update_add_state()
-
     def _run_optimize(self) -> None:
         """Собирает параметры и запускает задачу оптимизации в фоновом потоке."""
         source = self.optimize_input.get_data_source()
@@ -259,8 +240,6 @@ class OptimizeTab(BaseOperationTab):
             self.progress_panel.set_status("Error")
             return
 
-        self._set_running_state("Running optimize...")
-
         worker = Worker(
             run_optimize,
             source,
@@ -272,8 +251,7 @@ class OptimizeTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._render_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
+        self._start_worker(worker, "Running optimize...")
 
     def _run_add(self) -> None:
         """Собирает параметры и запускает задачу добавления в фоновом потоке."""
@@ -292,8 +270,6 @@ class OptimizeTab(BaseOperationTab):
             self.progress_panel.set_status("Error")
             return
 
-        self._set_running_state("Adding prefix...")
-
         worker = Worker(
             run_add,
             source,
@@ -303,8 +279,7 @@ class OptimizeTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._render_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
+        self._start_worker(worker, "Adding prefix...")
 
     def _render_result(self, result: OptimizeResult) -> None:
         """
@@ -328,10 +303,6 @@ class OptimizeTab(BaseOperationTab):
         """
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
-
-    def _on_finished(self) -> None:
-        """Восстанавливает интерфейс после завершения задачи."""
-        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла для активного режима."""

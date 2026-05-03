@@ -247,9 +247,6 @@ class IntersectTab(BaseOperationTab):
             self._names.append(name)
 
         strict = self.strict.isChecked()
-
-        self._set_running_state("Calculating intersections...")
-
         n = len(self._sources)
 
         if n <= 2:
@@ -274,8 +271,7 @@ class IntersectTab(BaseOperationTab):
             worker.signals.result.connect(self._on_multi_result)
 
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
+        self._start_worker(worker, "Calculating intersections...")
 
     def _build_self_intersect_html(self, report: IntersectReport) -> str:
         """
@@ -563,9 +559,6 @@ class IntersectTab(BaseOperationTab):
         self.split_output.set_output_text("")
         self.progress_panel.set_status("Error")
 
-    def _on_finished(self) -> None:
-        """Восстанавливает интерфейс."""
-        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла для первой незаполненной панели."""

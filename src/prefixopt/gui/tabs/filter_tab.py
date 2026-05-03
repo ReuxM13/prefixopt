@@ -115,8 +115,6 @@ class FilterTab(BaseOperationTab):
 
         fmt = self.output_format.currentText()
 
-        self._set_running_state("Running filter...")
-
         worker = Worker(
             run_filter,
             source,
@@ -131,8 +129,8 @@ class FilterTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._on_filter_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
+        # worker.signals.finished.connect(self._on_finished)
+        self._start_worker(worker, "...")
 
     def _on_filter_result(self, result: FilterResult) -> None:
         """
@@ -159,9 +157,6 @@ class FilterTab(BaseOperationTab):
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
 
-    def _on_finished(self) -> None:
-        """Восстанавливает интерфейс."""
-        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""

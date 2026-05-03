@@ -83,13 +83,11 @@ class CheckTab(BaseOperationTab):
         if target is None or source is None:
             return
 
-        self._set_running_state("Checking...")
-
         worker = Worker(run_check, target, source)
         worker.signals.result.connect(self._on_check_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
+        # worker.signals.finished.connect(self._on_finished)
+        self._start_worker(worker, "...")
 
     def _on_check_result(self, result: CheckResult) -> None:
         """
@@ -131,9 +129,6 @@ class CheckTab(BaseOperationTab):
         self.split_output.set_output_text("")
         self.progress_panel.set_status("Error")
 
-    def _on_finished(self) -> None:
-        """Восстанавливает интерфейс."""
-        self._restore_idle_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""
