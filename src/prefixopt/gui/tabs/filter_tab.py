@@ -129,8 +129,7 @@ class FilterTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._on_filter_result)
         worker.signals.error.connect(self._on_error)
-        # worker.signals.finished.connect(self._on_finished)
-        self._start_worker(worker, "...")
+        self._start_worker(worker, "Running filter...")
 
     def _on_filter_result(self, result: FilterResult) -> None:
         """
@@ -146,7 +145,6 @@ class FilterTab(BaseOperationTab):
             f"Done. Removed: {result.removed_count}, "
             f"Remaining: {remaining}"
         )
-
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""

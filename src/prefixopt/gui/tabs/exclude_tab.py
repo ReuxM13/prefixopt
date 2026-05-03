@@ -14,8 +14,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QStackedWidget,
-    QVBoxLayout,
-    QWidget,
 )
 
 from .base_operation_tab import BaseOperationTab
@@ -157,7 +155,6 @@ class ExcludeTab(BaseOperationTab):
             self.progress_panel.set_status("Error")
             return
 
-
         worker = Worker(
             run_exclude,
             source,
@@ -170,8 +167,7 @@ class ExcludeTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._on_exclude_result)
         worker.signals.error.connect(self._on_error)
-        # worker.signals.finished.connect(self._on_finished)
-        self._start_worker(worker, "...")
+        self._start_worker(worker, "Excluding...")
 
     def _on_exclude_result(self, result: ExcludeResult) -> None:
         """

@@ -1,9 +1,10 @@
 """
-Вкладка сравнения двух источников с отображением изменений.
+Вкладка семантического сравнения двух источников префиксов.
 """
 
 from typing import Any
 
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -22,24 +23,19 @@ from ..workers import Worker
 
 
 class DiffTab(BaseOperationTab):
-    """
-    Вкладка сравнения двух источников и отображения различий.
-    """
+    """Вкладка сравнения двух источников и отображения различий."""
 
     def __init__(self) -> None:
-        """
-        Инициализирует вкладку и создает элементы интерфейса.
-        """
+        """Инициализирует вкладку и создает элементы интерфейса."""
         super().__init__()
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """
-        Создает элементы управления вкладки и подключает сигналы.
-        """
+        """Создает элементы управления вкладки и подключает сигналы."""
         self.control_layout.addWidget(
             QLabel(
-                "Compare two sources and show added, removed and unchanged prefixes."
+                "Compare two sources and show added, removed "
+                "and unchanged prefixes."
             )
         )
 
@@ -79,6 +75,7 @@ class DiffTab(BaseOperationTab):
 
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Diff")
+        self.run_button.setProperty("primary", True)
         run_row.addStretch()
         run_row.addWidget(self.run_button)
 
@@ -92,13 +89,38 @@ class DiffTab(BaseOperationTab):
 
         self._update_state()
 
-    def _update_state(self, _: Any = None) -> None:
+    def _is_dark_theme(self) -> bool:
         """
-        Обновляет доступность кнопки запуска.
+        Определяет активную тему по яркости фона палитры.
 
-        Args:
-            _: Аргумент сигнала.
+        Returns:
+            True для тёмной темы.
         """
+        bg = self.palette().color(QPalette.ColorRole.Window)
+        luminance = 0.299 * bg.redF() + 0.587 * bg.greenF() + 0.114 * bg.blueF()
+        return luminance < 0.5
+
+    def _get_diff_colors(self) -> dict:
+        """
+        Возвращает набор цветов для diff-отчета, адаптированный к текущей теме.
+
+        Returns:
+            Словарь с ключами added, removed, unchanged.
+        """
+        if self._is_dark_theme():
+            return {
+                "added": "#4ec9b0",
+                "removed": "#f44747",
+                "unchanged": "#569cd6",
+            }
+        return {
+            "added": "#22863a",
+            "removed": "#cb2431",
+            "unchanged": "#0366d6",
+        }
+
+    def _update_state(self, _: Any = None) -> None:
+        """Обновляет доступность кнопки запуска."""
         self.run_button.setEnabled(
             self.new_input.get_data_source() is not None
             and self.old_input.get_data_source() is not None
@@ -122,9 +144,7 @@ class DiffTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._on_diff_result)
         worker.signals.error.connect(self._on_error)
-        #worker.signals.finished.connect(self._on_finished)
-
-        self._start_worker(worker, "...")
+        self._start_worker(worker, "Calculating diff...")
 
     def _on_diff_result(self, result: DiffReport) -> None:
         """
@@ -134,8 +154,10 @@ class DiffTab(BaseOperationTab):
             result: Результат сравнения источников.
         """
         self._expand_output()
+
         mode = self.mode.currentText()
         summary_only = self.summary_only.isChecked()
+        colors = self._get_diff_colors()
 
         show_added = mode in ("changes", "added", "all")
         show_removed = mode in ("changes", "removed", "all")
@@ -145,11 +167,20 @@ class DiffTab(BaseOperationTab):
             html_parts = []
 
             if show_added:
-                html_parts.append(f"<b>Added:</b> {len(result.added)}<br>")
+                html_parts.append(
+                    f'<b style="color:{colors["added"]}">Added:</b> '
+                    f"{len(result.added)}<br>"
+                )
             if show_removed:
-                html_parts.append(f"<b>Removed:</b> {len(result.removed)}<br>")
+                html_parts.append(
+                    f'<b style="color:{colors["removed"]}">Removed:</b> '
+                    f"{len(result.removed)}<br>"
+                )
             if show_unchanged:
-                html_parts.append(f"<b>Unchanged:</b> {len(result.unchanged)}<br>")
+                html_parts.append(
+                    f'<b style="color:{colors["unchanged"]}">Unchanged:</b> '
+                    f"{len(result.unchanged)}<br>"
+                )
 
             if not html_parts:
                 html_parts.append("No differences in selected mode.")
@@ -160,31 +191,37 @@ class DiffTab(BaseOperationTab):
 
             if show_added and result.added:
                 body_parts.append(
-                    f'<p><b style="color:green;">+++ Added ({len(result.added)}):</b></p>'
+                    f'<p><b style="color:{colors["added"]};">'
+                    f"+++ Added ({len(result.added)}):</b></p>"
                 )
                 for net in result.added:
                     body_parts.append(
-                        f'<span style="color:green;">+ {net}</span><br>'
+                        f'<span style="color:{colors["added"]};">'
+                        f"+ {net}</span><br>"
                     )
                 body_parts.append("<br>")
 
             if show_removed and result.removed:
                 body_parts.append(
-                    f'<p><b style="color:red;">--- Removed ({len(result.removed)}):</b></p>'
+                    f'<p><b style="color:{colors["removed"]};">'
+                    f"--- Removed ({len(result.removed)}):</b></p>"
                 )
                 for net in result.removed:
                     body_parts.append(
-                        f'<span style="color:red;">- {net}</span><br>'
+                        f'<span style="color:{colors["removed"]};">'
+                        f"- {net}</span><br>"
                     )
                 body_parts.append("<br>")
 
             if show_unchanged and result.unchanged:
                 body_parts.append(
-                    f'<p><b style="color:blue;">=== Unchanged ({len(result.unchanged)}):</b></p>'
+                    f'<p><b style="color:{colors["unchanged"]};">'
+                    f"=== Unchanged ({len(result.unchanged)}):</b></p>"
                 )
                 for net in result.unchanged:
                     body_parts.append(
-                        f'<span style="color:blue;">= {net}</span><br>'
+                        f'<span style="color:{colors["unchanged"]};">'
+                        f"= {net}</span><br>"
                     )
                 body_parts.append("<br>")
 
@@ -192,34 +229,28 @@ class DiffTab(BaseOperationTab):
                 body_parts.append("<p>No differences in selected mode.</p>")
 
             html = (
-                '<html><body style="font-family: Consolas, monospace;">'
+                '<html><body style="font-family: Consolas, '
+                "'Courier New', monospace;\">"
                 f'{"".join(body_parts)}'
                 "</body></html>"
             )
             self.output_panel.set_html(html)
 
         self.progress_panel.set_status(
-            "Done. "
-            f"Added: {len(result.added)}, "
+            f"Done. Added: {len(result.added)}, "
             f"Removed: {len(result.removed)}, "
             f"Unchanged: {len(result.unchanged)}"
         )
 
-
     def trigger_open(self) -> None:
-        """
-        Открывает диалог выбора файла для первого незаполненного источника.
-        """
+        """Открывает диалог выбора файла для первого незаполненного источника."""
         if self.new_input.get_data_source() is None:
             self.new_input.browse_button.click()
             return
-
         self.old_input.browse_button.click()
 
     def trigger_run(self) -> None:
-        """
-        Запускает сравнение, если кнопка доступна.
-        """
+        """Запускает сравнение."""
         if self.run_button.isEnabled():
             self.run_button.click()
 

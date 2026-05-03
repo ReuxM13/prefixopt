@@ -138,8 +138,7 @@ class MergeTab(BaseOperationTab):
         )
         worker.signals.result.connect(self._on_merge_result)
         worker.signals.error.connect(self._on_error)
-        # worker.signals.finished.connect(self._on_finished)
-        self._start_worker(worker, "...")
+        self._start_worker(worker, "Merging...")
 
     def _on_merge_result(self, result: MergeResult) -> None:
         """
@@ -153,8 +152,6 @@ class MergeTab(BaseOperationTab):
         self.progress_panel.set_status(
             f"Done. Total prefixes: {result.total_count}"
         )
-
-
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла для первого незаполненного источника."""

@@ -24,16 +24,12 @@ class SplitTab(BaseOperationTab):
     """Вкладка разбиения сетей на подсети."""
 
     def __init__(self) -> None:
-        """
-        Инициализирует вкладку и создает элементы интерфейса.
-        """
+        """Инициализирует вкладку и создает элементы интерфейса."""
         super().__init__()
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """
-        Создает структуру вкладки.
-        """
+        """Создает структуру вкладки."""
         self.control_layout.addWidget(
             QLabel(
                 "Split a network or a list of networks into smaller subnets."
@@ -74,12 +70,7 @@ class SplitTab(BaseOperationTab):
         self._update_state()
 
     def _update_state(self, _: Any = None) -> None:
-        """
-        Обновляет доступность кнопки запуска.
-
-        Args:
-            _: Аргумент сигнала.
-        """
+        """Обновляет доступность кнопки запуска."""
         self.run_button.setEnabled(
             self.input_panel.get_data_source() is not None
         )
@@ -90,12 +81,10 @@ class SplitTab(BaseOperationTab):
         if source is None:
             return
 
-
         worker = Worker(run_split, source, self.target_length.value())
         worker.signals.result.connect(self._on_split_result)
         worker.signals.error.connect(self._on_error)
-        # worker.signals.finished.connect(self._on_finished)
-        self._start_worker(worker, "...")
+        self._start_worker(worker, "Splitting...")
 
     def _on_split_result(self, result: SplitResult) -> None:
         """
@@ -110,18 +99,12 @@ class SplitTab(BaseOperationTab):
             f"Done. Generated {result.total_count} subnets"
         )
 
-
-
     def trigger_open(self) -> None:
-        """
-        Открывает диалог выбора файла.
-        """
+        """Открывает диалог выбора файла."""
         self.input_panel.browse_button.click()
 
     def trigger_run(self) -> None:
-        """
-        Запускает операцию разбиения.
-        """
+        """Запускает операцию разбиения."""
         if self.run_button.isEnabled():
             self.run_button.click()
 
@@ -145,5 +128,4 @@ class SplitTab(BaseOperationTab):
         """
         if not state:
             return
-
         self.target_length.setValue(int(state.get("target_length", 24)))

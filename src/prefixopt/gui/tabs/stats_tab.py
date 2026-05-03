@@ -80,8 +80,7 @@ class StatsTab(BaseOperationTab):
         worker = Worker(run_stats, source)
         worker.signals.result.connect(self._on_stats_result)
         worker.signals.error.connect(self._on_error)
-        # worker.signals.finished.connect(self._on_finished)
-        self._start_worker(worker, "...")
+        self._start_worker(worker, "Calculating stats...")
 
     def _on_stats_result(self, result: StatsResult) -> None:
         """
@@ -114,9 +113,7 @@ class StatsTab(BaseOperationTab):
         )
         self.table.setItem(2, 0, QTableWidgetItem("Compression ratio"))
         self.table.setItem(
-            2,
-            1,
-            QTableWidgetItem(f"{result.compression_ratio_percent}%"),
+            2, 1, QTableWidgetItem(f"{result.compression_ratio_percent}%")
         )
         self.table.setItem(3, 0, QTableWidgetItem("Original total IPs"))
         self.table.setItem(
@@ -138,8 +135,7 @@ class StatsTab(BaseOperationTab):
                 6, 0, QTableWidgetItem("IPv4 / IPv6 count")
             )
             self.table.setItem(
-                6,
-                1,
+                6, 1,
                 QTableWidgetItem(
                     f"{result.ipv4_count} / {result.ipv6_count}"
                 ),
@@ -170,8 +166,6 @@ class StatsTab(BaseOperationTab):
             self.output_panel.clear()
 
         self.progress_panel.set_status("Done")
-
-
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""
