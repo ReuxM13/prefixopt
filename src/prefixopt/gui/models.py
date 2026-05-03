@@ -1,14 +1,20 @@
 """
 Модели данных для GUI.
+
+Каждая модель содержит поле formatted_text для передачи
+готовой строки вывода из фонового потока в GUI.
 """
+
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict, Union
+from typing import Dict, List, Tuple
 
 from ..core.ip_utils import IPNet
 
 
 @dataclass
 class OptimizeResult:
+    """Результат операции оптимизации или добавления префикса."""
+
     prefixes: List[IPNet] = field(default_factory=list)
     commented_prefixes: List[Tuple[IPNet, str]] = field(default_factory=list)
     keep_comments: bool = False
@@ -19,23 +25,33 @@ class OptimizeResult:
 
 @dataclass
 class FilterResult:
+    """Результат операции фильтрации."""
+
     prefixes: List[IPNet] = field(default_factory=list)
     original_count: int = 0
     removed_count: int = 0
+    formatted_text: str = ""
 
 
 @dataclass
 class MergeResult:
+    """Результат операции слияния."""
+
     prefixes: List[IPNet] = field(default_factory=list)
     commented_prefixes: List[Tuple[IPNet, str]] = field(default_factory=list)
     keep_comments: bool = False
     total_count: int = 0
+    formatted_text: str = ""
 
 
 @dataclass
 class IntersectReport:
+    """Результат анализа пересечений двух источников."""
+
     exact_matches: List[IPNet] = field(default_factory=list)
-    partial_overlaps: List[Tuple[IPNet, IPNet, str, str]] = field(default_factory=list)
+    partial_overlaps: List[Tuple[IPNet, IPNet, str, str]] = field(
+        default_factory=list
+    )
     volume1: int = 0
     volume2: int = 0
     volume_intersection: int = 0
@@ -51,6 +67,8 @@ class IntersectReport:
 
 @dataclass
 class MultiIntersectReport:
+    """Результат мульти-пересечения (3+ источников)."""
+
     common_prefixes: List[IPNet] = field(default_factory=list)
     presence_map: Dict[str, List[int]] = field(default_factory=dict)
     volumes: List[int] = field(default_factory=list)
@@ -61,6 +79,8 @@ class MultiIntersectReport:
 
 @dataclass
 class DiffReport:
+    """Результат операции сравнения."""
+
     added: List[IPNet] = field(default_factory=list)
     removed: List[IPNet] = field(default_factory=list)
     unchanged: List[IPNet] = field(default_factory=list)
@@ -68,20 +88,28 @@ class DiffReport:
 
 @dataclass
 class ExcludeResult:
+    """Результат операции вычитания."""
+
     prefixes: List[IPNet] = field(default_factory=list)
     commented_prefixes: List[Tuple[IPNet, str]] = field(default_factory=list)
     keep_comments: bool = False
     total_count: int = 0
+    formatted_text: str = ""
 
 
 @dataclass
 class SplitResult:
+    """Результат операции разбиения на подсети."""
+
     subnets: List[IPNet] = field(default_factory=list)
     total_count: int = 0
+    formatted_text: str = ""
 
 
 @dataclass
 class StatsResult:
+    """Результат сбора статистики."""
+
     original_prefix_count: int = 0
     optimized_prefix_count: int = 0
     compression_ratio_percent: float = 0.0
@@ -95,6 +123,9 @@ class StatsResult:
 
 @dataclass
 class CheckResult:
+    """Результат проверки вхождения адреса в список."""
+
     target: str = ""
     found: bool = False
     containing_networks: List[IPNet] = field(default_factory=list)
+    formatted_text: str = ""

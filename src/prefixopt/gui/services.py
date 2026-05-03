@@ -8,34 +8,42 @@
 
 import ipaddress
 from pathlib import Path
-from typing import Union, Optional, List, Tuple, Iterable, Iterator, Dict, Any
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
-from ..core.ip_utils import IPNet, normalize_prefix, is_subnet_of
-from ..core.pipeline import process_prefixes
-from ..core.operations.sorter import sort_networks
-from ..core.operations.subtractor import subtract_networks
-from ..core.operations.subnetter import split_network
-from ..core.operations.diff import calculate_diff
 from ..core.ip_counter import count_unique_ips, get_prefix_statistics
-from .output_formatter import format_prefixes
+from ..core.ip_utils import IPNet, is_subnet_of, normalize_prefix
+from ..core.operations.diff import calculate_diff
+from ..core.operations.sorter import sort_networks
+from ..core.operations.subnetter import split_network
+from ..core.operations.subtractor import subtract_networks
+from ..core.pipeline import process_prefixes
 from ..data.file_reader import (
-    read_networks,
     extract_prefixes_from_text,
+    read_networks,
     read_prefixes_with_comments,
 )
-
 from .models import (
-    OptimizeResult,
-    FilterResult,
-    MergeResult,
-    IntersectReport,
-    MultiIntersectReport,
+    CheckResult,
     DiffReport,
     ExcludeResult,
+    FilterResult,
+    IntersectReport,
+    MergeResult,
+    MultiIntersectReport,
+    OptimizeResult,
     SplitResult,
     StatsResult,
-    CheckResult,
 )
+from .output_formatter import format_prefixes
 
 InputSource = Union[Path, str]
 
@@ -132,7 +140,13 @@ def _deduplicate_commented(
         net_obj = ipaddress.ip_network(net_str, strict=False)
         result.append((net_obj, comm))
 
-    result.sort(key=lambda x: (x[0].version, int(x[0].network_address), x[0].prefixlen))
+    result.sort(
+        key=lambda x: (
+            x[0].version,
+            int(x[0].network_address),
+            x[0].prefixlen,
+        )
+    )
     return result
 
 
@@ -147,10 +161,6 @@ def run_optimize(
     """
     Выполняет полный цикл оптимизации префиксов.
 
-    Загружает данные, выполняет математическую обработку и формирует
-    готовую текстовую строку вывода. Результат передается в GUI-поток
-    как легковесный объект с formatted_text.
-
     Args:
         source: Источник данных (путь к файлу или текст).
         fmt: Формат вывода ("list" или "csv").
@@ -164,7 +174,9 @@ def run_optimize(
     """
     if keep_comments:
         raw = _load_with_comments(source, strict=strict)
-        commented = _deduplicate_commented(raw, ipv4_only=ipv4_only, ipv6_only=ipv6_only)
+        commented = _deduplicate_commented(
+            raw, ipv4_only=ipv4_only, ipv6_only=ipv6_only
+        )
         formatted_text = format_prefixes([], fmt, commented=commented)
 
         return OptimizeResult(
@@ -222,9 +234,15 @@ def run_add(
 
         exists = any(item[0] == net_to_add for item in commented)
         if not exists:
-            commented.append((net_to_add, f"# Added manually: {new_prefix}"))
+            commented.append(
+                (net_to_add, f"# Added manually: {new_prefix}")
+            )
             commented.sort(
-                key=lambda x: (x[0].version, int(x[0].network_address), x[0].prefixlen)
+                key=lambda x: (
+                    x[0].version,
+                    int(x[0].network_address),
+                    x[0].prefixlen,
+                )
             )
 
         formatted_text = format_prefixes([], fmt, commented=commented)
@@ -242,7 +260,11 @@ def run_add(
     if net_to_add not in data:
         data.append(net_to_add)
 
-    result = list(process_prefixes(data, sort=True, remove_nested=True, aggregate=True))
+    result = list(
+        process_prefixes(
+            data, sort=True, remove_nested=True, aggregate=True
+        )
+    )
     formatted_text = format_prefixes(result, fmt)
 
     return OptimizeResult(
@@ -255,6 +277,7 @@ def run_add(
 
 def run_filter(
     source: InputSource,
+    fmt: str,
     exclude_private: bool = False,
     exclude_loopback: bool = False,
     exclude_link_local: bool = False,
@@ -268,6 +291,7 @@ def run_filter(
 
     Args:
         source: Источник данных.
+        fmt: Формат вывода ("list" или "csv").
         exclude_private: Удалить RFC 1918.
         exclude_loopback: Удалить loopback.
         exclude_link_local: Удалить link-local.
@@ -277,7 +301,7 @@ def run_filter(
         strict: Строгая валидация.
 
     Returns:
-        FilterResult со списком отфильтрованных префиксов и статистикой.
+        FilterResult с готовой строкой formatted_text и статистикой.
     """
     raw = list(_load_networks(source, strict=strict))
     original_count = len(raw)
@@ -296,17 +320,19 @@ def run_filter(
         bogons=bogons,
     )
     result = list(result_iter)
+    formatted_text = format_prefixes(result, fmt)
 
     return FilterResult(
-        prefixes=result,
         original_count=original_count,
         removed_count=original_count - len(result),
+        formatted_text=formatted_text,
     )
 
 
 def run_merge(
     source1: InputSource,
     source2: InputSource,
+    fmt: str,
     keep_comments: bool = False,
     append_comment: Optional[str] = None,
     strict: bool = False,
@@ -317,18 +343,21 @@ def run_merge(
     Args:
         source1: Первый источник.
         source2: Второй источник.
+        fmt: Формат вывода ("list" или "csv").
         keep_comments: Режим дедупликации с комментариями.
         append_comment: Текст для добавления к комментариям source1.
         strict: Строгая валидация.
 
     Returns:
-        MergeResult с объединенным списком.
+        MergeResult с готовой строкой formatted_text.
     """
     if keep_comments:
         unique_map: dict[str, str] = {}
 
         if append_comment:
-            annotation = f"# {append_comment.strip()}" if append_comment.strip() else ""
+            annotation = (
+                f"# {append_comment.strip()}" if append_comment.strip() else ""
+            )
 
             for ip, comment in _load_with_comments(source2, strict=strict):
                 ip_str = str(ip)
@@ -337,8 +366,8 @@ def run_merge(
 
             for ip, comment in _load_with_comments(source1, strict=strict):
                 ip_str = str(ip)
-                parts_existing = set()
-                parts_new = []
+                parts_existing: set[str] = set()
+                parts_new: list[str] = []
 
                 if ip_str in unique_map:
                     for p in _split_comment(unique_map[ip_str]):
@@ -376,28 +405,39 @@ def run_merge(
             net = ipaddress.ip_network(ip_str, strict=False)
             commented.append((net, comm))
 
-        commented.sort(key=lambda x: (x[0].version, int(x[0].network_address), x[0].prefixlen))
+        commented.sort(
+            key=lambda x: (
+                x[0].version,
+                int(x[0].network_address),
+                x[0].prefixlen,
+            )
+        )
+
+        formatted_text = format_prefixes([], fmt, commented=commented)
 
         return MergeResult(
-            commented_prefixes=commented,
             keep_comments=True,
             total_count=len(commented),
+            formatted_text=formatted_text,
         )
 
     list1 = list(_load_networks(source1, strict=strict))
     list2 = list(_load_networks(source2, strict=strict))
 
-    result = list(process_prefixes(
-        list1 + list2,
-        sort=True,
-        remove_nested=True,
-        aggregate=True,
-    ))
+    result = list(
+        process_prefixes(
+            list1 + list2,
+            sort=True,
+            remove_nested=True,
+            aggregate=True,
+        )
+    )
+    formatted_text = format_prefixes(result, fmt)
 
     return MergeResult(
-        prefixes=result,
         keep_comments=False,
         total_count=len(result),
+        formatted_text=formatted_text,
     )
 
 
@@ -470,11 +510,17 @@ def run_intersect(
         if net1 == net2:
             continue
         if net1.subnet_of(net2):
-            partial_overlaps.append((net1, net2, name1, name2 if not self_mode else name1))
+            partial_overlaps.append(
+                (net1, net2, name1, name2 if not self_mode else name1)
+            )
         elif net2.subnet_of(net1):
-            partial_overlaps.append((net2, net1, name2 if not self_mode else name1, name1))
+            partial_overlaps.append(
+                (net2, net1, name2 if not self_mode else name1, name1)
+            )
         else:
-            partial_overlaps.append((net1, net2, name1, name2 if not self_mode else name1))
+            partial_overlaps.append(
+                (net1, net2, name1, name2 if not self_mode else name1)
+            )
 
     intersection_fragments: List[IPNet] = list(common)
     for net1, net2 in raw_overlaps:
@@ -485,7 +531,11 @@ def run_intersect(
         elif net2.subnet_of(net1):
             intersection_fragments.append(net2)
 
-    volume_intersection = count_unique_ips(intersection_fragments) if intersection_fragments else 0
+    volume_intersection = (
+        count_unique_ips(intersection_fragments)
+        if intersection_fragments
+        else 0
+    )
 
     cov1 = (volume_intersection / volume1 * 100) if volume1 > 0 else 0.0
     cov2 = (volume_intersection / volume2 * 100) if volume2 > 0 else 0.0
@@ -535,8 +585,10 @@ def _find_two_list_overlaps(
             j += 1
             continue
 
-        s1, e1 = int(n1.network_address), int(n1.broadcast_address)
-        s2, e2 = int(n2.network_address), int(n2.broadcast_address)
+        s1 = int(n1.network_address)
+        e1 = int(n1.broadcast_address)
+        s2 = int(n2.network_address)
+        e2 = int(n2.broadcast_address)
 
         if max(s1, s2) <= min(e1, e2):
             overlaps.append((n1, n2))
@@ -593,8 +645,6 @@ def run_diff(
     """
     Семантическое сравнение двух наборов данных.
 
-    Оба набора нормализуются перед сравнением (сортировка, агрегация).
-
     Args:
         new_source: Новый набор данных.
         old_source: Старый набор данных.
@@ -605,16 +655,19 @@ def run_diff(
     Returns:
         DiffReport со списками добавленных, удаленных и неизменных префиксов.
     """
+
     def prepare(src: InputSource) -> List[IPNet]:
         raw = _load_networks(src, strict=strict)
-        return list(process_prefixes(
-            raw,
-            sort=True,
-            remove_nested=True,
-            aggregate=True,
-            ipv4_only=ipv4_only,
-            ipv6_only=ipv6_only,
-        ))
+        return list(
+            process_prefixes(
+                raw,
+                sort=True,
+                remove_nested=True,
+                aggregate=True,
+                ipv4_only=ipv4_only,
+                ipv6_only=ipv6_only,
+            )
+        )
 
     new_list = prepare(new_source)
     old_list = prepare(old_source)
@@ -631,6 +684,7 @@ def run_diff(
 def run_exclude(
     source: InputSource,
     target: InputSource,
+    fmt: str,
     keep_comments: bool = False,
     ipv4_only: bool = False,
     ipv6_only: bool = False,
@@ -642,13 +696,14 @@ def run_exclude(
     Args:
         source: Исходный список.
         target: Список для исключения.
+        fmt: Формат вывода ("list" или "csv").
         keep_comments: Наследовать комментарии от родительских сетей.
         ipv4_only: Оставить только IPv4.
         ipv6_only: Оставить только IPv6.
         strict: Строгая валидация.
 
     Returns:
-        ExcludeResult с результатом вычитания.
+        ExcludeResult с готовой строкой formatted_text.
     """
     exclude_list = list(_load_networks(target, strict=strict))
 
@@ -662,7 +717,9 @@ def run_exclude(
                 comments_map[net] = comm
 
         raw_result = subtract_networks(source_prefixes, exclude_list)
-        raw_result.sort(key=lambda x: (x.version, int(x.network_address), x.prefixlen))
+        raw_result.sort(
+            key=lambda x: (x.version, int(x.network_address), x.prefixlen)
+        )
 
         commented: List[Tuple[IPNet, str]] = []
         for fragment in raw_result:
@@ -671,35 +728,42 @@ def run_exclude(
                 inherited = comments_map[fragment]
             else:
                 for original in source_prefixes:
-                    if fragment.version == original.version and is_subnet_of(fragment, original):
+                    if (
+                        fragment.version == original.version
+                        and is_subnet_of(fragment, original)
+                    ):
                         if original in comments_map:
                             inherited = comments_map[original]
                             break
-
             commented.append((fragment, inherited))
 
+        formatted_text = format_prefixes([], fmt, commented=commented)
+
         return ExcludeResult(
-            commented_prefixes=commented,
             keep_comments=True,
             total_count=len(commented),
+            formatted_text=formatted_text,
         )
 
     source_list = list(_load_networks(source, strict=strict))
     raw_result = subtract_networks(source_list, exclude_list)
 
-    result = list(process_prefixes(
-        raw_result,
-        sort=True,
-        remove_nested=True,
-        aggregate=True,
-        ipv4_only=ipv4_only,
-        ipv6_only=ipv6_only,
-    ))
+    result = list(
+        process_prefixes(
+            raw_result,
+            sort=True,
+            remove_nested=True,
+            aggregate=True,
+            ipv4_only=ipv4_only,
+            ipv6_only=ipv6_only,
+        )
+    )
+    formatted_text = format_prefixes(result, fmt)
 
     return ExcludeResult(
-        prefixes=result,
         keep_comments=False,
         total_count=len(result),
+        formatted_text=formatted_text,
     )
 
 
@@ -717,7 +781,7 @@ def run_split(
         strict: Строгая валидация.
 
     Returns:
-        SplitResult со списком подсетей.
+        SplitResult с готовой строкой formatted_text.
     """
     all_subnets: List[IPNet] = []
 
@@ -725,9 +789,11 @@ def run_split(
         subs = split_network(net, target_length)
         all_subnets.extend(subs)
 
+    formatted_text = format_prefixes(all_subnets, "list")
+
     return SplitResult(
-        subnets=all_subnets,
         total_count=len(all_subnets),
+        formatted_text=formatted_text,
     )
 
 
@@ -740,7 +806,7 @@ def run_stats(source: InputSource, strict: bool = False) -> StatsResult:
         strict: Строгая валидация.
 
     Returns:
-        StatsResult с метриками компрессии, подсчетом уникальных адресов и дубликатов.
+        StatsResult с метриками.
     """
     data = list(_load_networks(source, strict=strict))
     raw_stats = get_prefix_statistics(data)
@@ -749,6 +815,7 @@ def run_stats(source: InputSource, strict: bool = False) -> StatsResult:
     ipv6_count = len([p for p in data if p.version == 6])
 
     from prefixopt.core.ip_counter import get_duplicate_prefixes
+
     duplicates = get_duplicate_prefixes(data)
 
     return StatsResult(
@@ -778,7 +845,7 @@ def run_check(
         strict: Строгая валидация.
 
     Returns:
-        CheckResult с результатом проверки и списком покрывающих сетей.
+        CheckResult с результатом проверки и готовой строкой.
     """
     try:
         if "/" in target:
@@ -794,17 +861,22 @@ def run_check(
         if net.version != check_item.version:
             continue
 
-        if isinstance(check_item, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+        if isinstance(
+            check_item, (ipaddress.IPv4Address, ipaddress.IPv6Address)
+        ):
             if check_item in net:
                 containing.append(net)
         else:
             if is_subnet_of(check_item, net):
                 containing.append(net)
 
+    formatted_text = format_prefixes(containing, "list") if containing else ""
+
     return CheckResult(
         target=target,
         found=len(containing) > 0,
         containing_networks=containing,
+        formatted_text=formatted_text,
     )
 
 
@@ -831,13 +903,17 @@ def run_multi_intersect(
     volumes = []
     for source in sources:
         raw = _load_networks(source, strict=strict)
-        optimized = list(process_prefixes(raw, sort=True, remove_nested=True, aggregate=True))
+        optimized = list(
+            process_prefixes(
+                raw, sort=True, remove_nested=True, aggregate=True
+            )
+        )
         lists.append(optimized)
         volumes.append(count_unique_ips(optimized))
 
     num_sources = len(sources)
     if source_names is None:
-        source_names = [f"Source {i+1}" for i in range(num_sources)]
+        source_names = [f"Source {i + 1}" for i in range(num_sources)]
 
     freq: Dict[str, int] = {}
     for lst in lists:
@@ -849,13 +925,17 @@ def run_multi_intersect(
     presence_map: Dict[str, List[int]] = {}
     for key in freq:
         presence_map[key] = [
-            idx for idx in range(num_sources) if key in {str(n) for n in sets[idx]}
+            idx
+            for idx in range(num_sources)
+            if key in {str(n) for n in sets[idx]}
         ]
 
     all_prefixes = [ipaddress.ip_network(key, strict=False) for key in freq]
     all_prefixes = sort_networks(all_prefixes)
 
-    intersection_volume = count_unique_ips(all_prefixes) if all_prefixes else 0
+    intersection_volume = (
+        count_unique_ips(all_prefixes) if all_prefixes else 0
+    )
 
     return MultiIntersectReport(
         common_prefixes=all_prefixes,

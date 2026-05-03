@@ -1,32 +1,48 @@
 """
-Exclude tab with worker integration.
+Вкладка вычитания префиксов (hole punching).
 """
-from PySide6.QtCore import QThreadPool
+
+from typing import Any
+
 from PySide6.QtWidgets import (
-    QLabel, QPushButton, QCheckBox, QComboBox, QFormLayout, QHBoxLayout,
-    QRadioButton, QButtonGroup, QStackedWidget, QWidget, QVBoxLayout
+    QButtonGroup,
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QRadioButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from .base_operation_tab import BaseOperationTab
-from ..widgets.input_panel import InputPanel
-from ..widgets.prefix_input_widget import PrefixInputWidget
-from ..widgets.options_group import OptionsGroup
-from ..workers import Worker
-from ..services import run_exclude
 from ..models import ExcludeResult
-from ..output_formatter import format_prefixes
+from ..services import run_exclude
+from ..widgets.input_panel import InputPanel
+from ..widgets.options_group import OptionsGroup
+from ..widgets.prefix_input_widget import PrefixInputWidget
+from ..workers import Worker
 
 
 class ExcludeTab(BaseOperationTab):
+    """Вкладка вычитания префиксов из исходного списка."""
+
     def __init__(self) -> None:
+        """Инициализирует вкладку и создает элементы интерфейса."""
         super().__init__()
         self._init_ui()
-        self.threadpool = QThreadPool.globalInstance()
 
     def _init_ui(self) -> None:
-        self.control_layout.addWidget(QLabel(
-            "Subtract one target from a source list. Target may be a single prefix or a list."
-        ))
+        """Создает структуру вкладки."""
+        self.control_layout.addWidget(
+            QLabel(
+                "Subtract one target from a source list. "
+                "Target may be a single prefix or a list."
+            )
+        )
 
         self.source_input = InputPanel(
             title="Source",
@@ -84,6 +100,7 @@ class ExcludeTab(BaseOperationTab):
 
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Exclude")
+        self.run_button.setProperty("primary", True)
         run_row.addStretch()
         run_row.addWidget(self.run_button)
         self.control_layout.addLayout(run_row)
@@ -100,13 +117,15 @@ class ExcludeTab(BaseOperationTab):
         self._update_state()
 
     def _update_target_mode(self) -> None:
+        """Переключает виджет ввода цели."""
         if self.single_target_radio.isChecked():
             self.target_stack.setCurrentWidget(self.single_target_widget)
         else:
             self.target_stack.setCurrentWidget(self.multi_target_widget)
         self._update_state()
 
-    def _update_state(self, _=None) -> None:
+    def _update_state(self, _: Any = None) -> None:
+        """Обновляет доступность кнопки запуска."""
         source_ok = self.source_input.get_data_source() is not None
         if self.single_target_radio.isChecked():
             target_ok = self.single_target_widget.get_value() is not None
@@ -115,27 +134,27 @@ class ExcludeTab(BaseOperationTab):
         self.run_button.setEnabled(source_ok and target_ok)
 
     def _run_exclude(self) -> None:
+        """Собирает параметры и запускает вычитание в фоновом потоке."""
         source = self.source_input.get_data_source()
         if source is None:
             return
 
         if self.single_target_radio.isChecked():
             target = self.single_target_widget.get_value()
-            if target is None:
-                return
         else:
             target = self.multi_target_widget.get_data_source()
-            if target is None:
-                return
+
+        if target is None:
+            return
 
         keep_comments = self.keep_comments.isChecked()
-        ipv4_only = self.ipv4_only.isChecked()
-        ipv6_only = self.ipv6_only.isChecked()
-        strict = self.strict.isChecked()
         fmt = self.output_format.currentText()
 
         if keep_comments and fmt == "csv":
-            self.output_panel.set_text("Error: Cannot use keep-comments with CSV format.")
+            self.output_panel.set_text(
+                "Error: Cannot use keep-comments with CSV format."
+            )
+            self.progress_panel.set_status("Error")
             return
 
         self.run_button.setEnabled(False)
@@ -146,10 +165,11 @@ class ExcludeTab(BaseOperationTab):
             run_exclude,
             source,
             target,
+            fmt,
             keep_comments=keep_comments,
-            ipv4_only=ipv4_only,
-            ipv6_only=ipv6_only,
-            strict=strict
+            ipv4_only=self.ipv4_only.isChecked(),
+            ipv6_only=self.ipv6_only.isChecked(),
+            strict=self.strict.isChecked(),
         )
         worker.signals.result.connect(self._on_exclude_result)
         worker.signals.error.connect(self._on_error)
@@ -157,48 +177,76 @@ class ExcludeTab(BaseOperationTab):
         self.threadpool.start(worker)
 
     def _on_exclude_result(self, result: ExcludeResult) -> None:
+        """
+        Отображает результат вычитания.
+
+        Args:
+            result: Результат с готовой строкой formatted_text.
+        """
         self._expand_output()
-        fmt = self.output_format.currentText()
-        try:
-            if result.keep_comments and result.commented_prefixes:
-                text = format_prefixes([], fmt, commented=result.commented_prefixes)
-            else:
-                text = format_prefixes(result.prefixes, fmt)
-            self.output_panel.set_text(text)
-            self.progress_panel.set_status(f"Done. Fragments: {result.total_count}")
-        except Exception as e:
-            self.output_panel.set_text(f"Formatting error: {e}")
+        self.output_panel.set_text(result.formatted_text)
+        self.progress_panel.set_status(
+            f"Done. Fragments: {result.total_count}"
+        )
 
     def _on_error(self, error_msg: str) -> None:
+        """
+        Отображает сообщение об ошибке.
+
+        Args:
+            error_msg: Текст ошибки.
+        """
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
 
     def _on_finished(self) -> None:
+        """Восстанавливает интерфейс."""
         self.run_button.setEnabled(True)
         self.progress_panel.set_busy(False)
 
+    def trigger_open(self) -> None:
+        """Открывает диалог выбора файла для источника."""
+        self.source_input.browse_button.click()
+
+    def trigger_run(self) -> None:
+        """Запускает вычитание."""
+        if self.run_button.isEnabled():
+            self.run_button.click()
+
     def save_settings(self) -> dict:
+        """
+        Сохраняет параметры вкладки.
+
+        Returns:
+            Словарь с настройками.
+        """
         return {
-            'single_target': self.single_target_radio.isChecked(),
-            'keep_comments': self.keep_comments.isChecked(),
-            'ipv4_only': self.ipv4_only.isChecked(),
-            'ipv6_only': self.ipv6_only.isChecked(),
-            'output_format': self.output_format.currentText(),
-            'strict': self.strict.isChecked(),
+            "single_target": self.single_target_radio.isChecked(),
+            "keep_comments": self.keep_comments.isChecked(),
+            "ipv4_only": self.ipv4_only.isChecked(),
+            "ipv6_only": self.ipv6_only.isChecked(),
+            "output_format": self.output_format.currentText(),
+            "strict": self.strict.isChecked(),
         }
 
     def load_settings(self, state: dict) -> None:
+        """
+        Восстанавливает параметры вкладки.
+
+        Args:
+            state: Словарь с настройками.
+        """
         if not state:
             return
-        if state.get('single_target', True):
+        if state.get("single_target", True):
             self.single_target_radio.setChecked(True)
         else:
             self.multi_target_radio.setChecked(True)
-        self.keep_comments.setChecked(state.get('keep_comments', False))
-        self.ipv4_only.setChecked(state.get('ipv4_only', False))
-        self.ipv6_only.setChecked(state.get('ipv6_only', False))
-        fmt = state.get('output_format', 'list')
+        self.keep_comments.setChecked(state.get("keep_comments", False))
+        self.ipv4_only.setChecked(state.get("ipv4_only", False))
+        self.ipv6_only.setChecked(state.get("ipv6_only", False))
+        fmt = state.get("output_format", "list")
         idx = self.output_format.findText(fmt)
         if idx >= 0:
             self.output_format.setCurrentIndex(idx)
-        self.strict.setChecked(state.get('strict', False))
+        self.strict.setChecked(state.get("strict", False))

@@ -1,30 +1,43 @@
 """
-Merge tab.
+Вкладка слияния двух списков префиксов.
 """
-from PySide6.QtCore import QThreadPool
+
+from typing import Any
+
 from PySide6.QtWidgets import (
-    QLabel, QPushButton, QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLineEdit
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
 )
 
 from .base_operation_tab import BaseOperationTab
+from ..models import MergeResult
+from ..services import run_merge
 from ..widgets.input_panel import InputPanel
 from ..widgets.options_group import OptionsGroup
 from ..workers import Worker
-from ..services import run_merge
-from ..models import MergeResult
-from ..output_formatter import format_prefixes
 
 
 class MergeTab(BaseOperationTab):
+    """Вкладка слияния двух источников."""
+
     def __init__(self) -> None:
+        """Инициализирует вкладку и создает элементы интерфейса."""
         super().__init__()
         self._init_ui()
-        self.threadpool = QThreadPool.globalInstance()
 
     def _init_ui(self) -> None:
-        self.control_layout.addWidget(QLabel(
-            "Merge two sources. Supports keep-comments mode and annotation for source 1."
-        ))
+        """Создает структуру вкладки."""
+        self.control_layout.addWidget(
+            QLabel(
+                "Merge two sources. Supports keep-comments mode "
+                "and annotation for source 1."
+            )
+        )
 
         self.input_a = InputPanel(
             title="Source 1",
@@ -44,7 +57,9 @@ class MergeTab(BaseOperationTab):
         self.output_format = QComboBox()
         self.output_format.addItems(["list", "csv"])
         self.append_comment = QLineEdit()
-        self.append_comment.setPlaceholderText("Optional annotation for Source 1")
+        self.append_comment.setPlaceholderText(
+            "Optional annotation for Source 1"
+        )
         self.strict = QCheckBox("Strict mode")
 
         form = QFormLayout()
@@ -57,6 +72,7 @@ class MergeTab(BaseOperationTab):
 
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Merge")
+        self.run_button.setProperty("primary", True)
         run_row.addStretch()
         run_row.addWidget(self.run_button)
         self.control_layout.addLayout(run_row)
@@ -72,6 +88,7 @@ class MergeTab(BaseOperationTab):
         self._update_run_state()
 
     def _update_options_state(self) -> None:
+        """Синхронизирует доступность опций с режимом комментариев."""
         keep = self.keep_comments.isChecked()
         self.append_comment.setEnabled(keep)
         idx = self.output_format.findText("csv")
@@ -79,79 +96,122 @@ class MergeTab(BaseOperationTab):
             model = self.output_format.model()
             if model:
                 item = model.item(idx)
-                item.setEnabled(not keep)
+                if item:
+                    item.setEnabled(not keep)
         if keep and self.output_format.currentText() == "csv":
             self.output_format.setCurrentText("list")
 
-    def _update_run_state(self, _=None) -> None:
+    def _update_run_state(self, _: Any = None) -> None:
+        """Обновляет доступность кнопки запуска."""
         self.run_button.setEnabled(
-            self.input_a.get_data_source() is not None and
-            self.input_b.get_data_source() is not None
+            self.input_a.get_data_source() is not None
+            and self.input_b.get_data_source() is not None
         )
 
     def _run_merge(self) -> None:
+        """Собирает параметры и запускает слияние в фоновом потоке."""
         source1 = self.input_a.get_data_source()
         source2 = self.input_b.get_data_source()
         if source1 is None or source2 is None:
             return
 
         keep_comments = self.keep_comments.isChecked()
-        append_comment = self.append_comment.text().strip()
-        if not append_comment:
-            append_comment = None
+        append_comment = self.append_comment.text().strip() or None
         fmt = self.output_format.currentText()
         strict = self.strict.isChecked()
 
         if keep_comments and fmt == "csv":
-            self.output_panel.set_text("Error: Cannot use keep-comments with CSV format.")
+            self.output_panel.set_text(
+                "Error: Cannot use keep-comments with CSV format."
+            )
+            self.progress_panel.set_status("Error")
             return
 
         self.run_button.setEnabled(False)
         self.progress_panel.set_busy(True)
         self.progress_panel.set_status("Merging...")
 
-        worker = Worker(run_merge, source1, source2, keep_comments, append_comment, strict)
+        worker = Worker(
+            run_merge,
+            source1,
+            source2,
+            fmt,
+            keep_comments,
+            append_comment,
+            strict,
+        )
         worker.signals.result.connect(self._on_merge_result)
         worker.signals.error.connect(self._on_error)
         worker.signals.finished.connect(self._on_finished)
         self.threadpool.start(worker)
 
     def _on_merge_result(self, result: MergeResult) -> None:
+        """
+        Отображает результат слияния.
+
+        Args:
+            result: Результат с готовой строкой formatted_text.
+        """
         self._expand_output()
-        fmt = self.output_format.currentText()
-        try:
-            if result.keep_comments:
-                text = format_prefixes([], fmt, commented=result.commented_prefixes)
-            else:
-                text = format_prefixes(result.prefixes, fmt)
-            self.output_panel.set_text(text)
-            self.progress_panel.set_status(f"Done. Total prefixes: {result.total_count}")
-        except Exception as e:
-            self.output_panel.set_text(f"Formatting error: {e}")
+        self.output_panel.set_text(result.formatted_text)
+        self.progress_panel.set_status(
+            f"Done. Total prefixes: {result.total_count}"
+        )
 
     def _on_error(self, error_msg: str) -> None:
+        """
+        Отображает сообщение об ошибке.
+
+        Args:
+            error_msg: Текст ошибки.
+        """
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
 
     def _on_finished(self) -> None:
+        """Восстанавливает интерфейс."""
         self.run_button.setEnabled(True)
         self.progress_panel.set_busy(False)
 
+    def trigger_open(self) -> None:
+        """Открывает диалог выбора файла для первого незаполненного источника."""
+        if self.input_a.get_data_source() is None:
+            self.input_a.browse_button.click()
+            return
+        self.input_b.browse_button.click()
+
+    def trigger_run(self) -> None:
+        """Запускает слияние."""
+        if self.run_button.isEnabled():
+            self.run_button.click()
+
     def save_settings(self) -> dict:
+        """
+        Сохраняет параметры вкладки.
+
+        Returns:
+            Словарь с настройками.
+        """
         return {
-            'keep_comments': self.keep_comments.isChecked(),
-            'append_comment': self.append_comment.text(),
-            'output_format': self.output_format.currentText(),
-            'strict': self.strict.isChecked(),
+            "keep_comments": self.keep_comments.isChecked(),
+            "append_comment": self.append_comment.text(),
+            "output_format": self.output_format.currentText(),
+            "strict": self.strict.isChecked(),
         }
 
     def load_settings(self, state: dict) -> None:
+        """
+        Восстанавливает параметры вкладки.
+
+        Args:
+            state: Словарь с настройками.
+        """
         if not state:
             return
-        self.keep_comments.setChecked(state.get('keep_comments', False))
-        self.append_comment.setText(state.get('append_comment', ''))
-        fmt = state.get('output_format', 'list')
+        self.keep_comments.setChecked(state.get("keep_comments", False))
+        self.append_comment.setText(state.get("append_comment", ""))
+        fmt = state.get("output_format", "list")
         idx = self.output_format.findText(fmt)
         if idx >= 0:
             self.output_format.setCurrentIndex(idx)
-        self.strict.setChecked(state.get('strict', False))
+        self.strict.setChecked(state.get("strict", False))
