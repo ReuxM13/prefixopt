@@ -1,43 +1,66 @@
 """
-Optimize tab with two modes: Optimize list and Add prefix.
+Вкладка графического интерфейса для выполнения операций оптимизации.
+
+Поддерживает два режима работы:
+- оптимизация списка префиксов (агрегация, удаление дубликатов, вложенных);
+- добавление нового префикса в существующий список с последующей реоптимизацией.
 """
-from PySide6.QtCore import QThreadPool
+
+from typing import Any
+
 from PySide6.QtWidgets import (
-    QLabel, QPushButton, QCheckBox, QComboBox, QHBoxLayout, QVBoxLayout,
-    QStackedWidget, QWidget, QFormLayout, QRadioButton, QButtonGroup
+    QButtonGroup,
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QRadioButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from .base_operation_tab import BaseOperationTab
-from ..widgets.input_panel import InputPanel
-from ..widgets.prefix_input_widget import PrefixInputWidget
-from ..widgets.options_group import OptionsGroup
-from ..workers import Worker
-from ..services import run_optimize, run_add
 from ..models import OptimizeResult
-from ..output_formatter import format_prefixes
+from ..services import run_add, run_optimize
+from ..widgets.input_panel import InputPanel
+from ..widgets.options_group import OptionsGroup
+from ..widgets.prefix_input_widget import PrefixInputWidget
+from ..workers import Worker
 
 
 class OptimizeTab(BaseOperationTab):
+    """Вкладка оптимизации списков префиксов и добавления нового префикса."""
+
     def __init__(self) -> None:
+        """Инициализирует вкладку и создает элементы интерфейса."""
         super().__init__()
         self._init_ui()
-        self.threadpool = QThreadPool.globalInstance()
 
     def _init_ui(self) -> None:
-        self.control_layout.addWidget(QLabel(
-            "Optimize prefix lists or add a new prefix into an existing list."
-        ))
+        """Создает структуру вкладки: переключатель режимов, стек страниц, сплиттер."""
+        self.control_layout.addWidget(
+            QLabel(
+                "Optimize prefix lists or add a new prefix into an existing list."
+            )
+        )
 
         mode_row = QHBoxLayout()
+
         self.optimize_radio = QRadioButton("Optimize list")
         self.add_radio = QRadioButton("Add prefix")
         self.optimize_radio.setChecked(True)
+
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.optimize_radio)
         self.mode_group.addButton(self.add_radio)
+
         mode_row.addWidget(self.optimize_radio)
         mode_row.addWidget(self.add_radio)
         mode_row.addStretch()
+
         self.control_layout.addLayout(mode_row)
 
         self.mode_stack = QStackedWidget()
@@ -45,19 +68,20 @@ class OptimizeTab(BaseOperationTab):
 
         self._build_optimize_mode()
         self._build_add_mode()
-
         self._setup_splitter(self.output_panel)
 
         self.optimize_radio.toggled.connect(self._switch_mode)
         self._switch_mode()
 
     def _switch_mode(self) -> None:
+        """Переключает активную страницу в стеке режимов."""
         if self.optimize_radio.isChecked():
             self.mode_stack.setCurrentWidget(self.optimize_page)
-        else:
-            self.mode_stack.setCurrentWidget(self.add_page)
+            return
+        self.mode_stack.setCurrentWidget(self.add_page)
 
     def _build_optimize_mode(self) -> None:
+        """Создает страницу режима полной оптимизации списка."""
         self.optimize_page = QWidget()
         layout = QVBoxLayout(self.optimize_page)
 
@@ -68,10 +92,12 @@ class OptimizeTab(BaseOperationTab):
         )
 
         options = OptionsGroup("Options")
+
         self.opt_ipv4_only = QCheckBox("IPv4 only")
         self.opt_ipv6_only = QCheckBox("IPv6 only")
         self.opt_keep_comments = QCheckBox("Keep comments")
         self.opt_strict = QCheckBox("Strict")
+
         self.opt_format = QComboBox()
         self.opt_format.addItems(["list", "csv"])
 
@@ -81,6 +107,7 @@ class OptimizeTab(BaseOperationTab):
         form.addRow(self.opt_keep_comments)
         form.addRow(self.opt_strict)
         form.addRow("Output format:", self.opt_format)
+
         options.add_layout(form)
 
         run_row = QHBoxLayout()
@@ -97,63 +124,12 @@ class OptimizeTab(BaseOperationTab):
         self.optimize_input.source_changed.connect(self._update_optimize_state)
         self.opt_keep_comments.toggled.connect(self._update_optimize_format_state)
         self.optimize_run_button.clicked.connect(self._run_optimize)
+
         self._update_optimize_state()
         self._update_optimize_format_state()
 
-    def _update_optimize_state(self, _=None) -> None:
-        self.optimize_run_button.setEnabled(self.optimize_input.get_data_source() is not None)
-
-    def _update_optimize_format_state(self, _=None) -> None:
-        keep = self.opt_keep_comments.isChecked()
-        idx = self.opt_format.findText("csv")
-        if idx >= 0:
-            model = self.opt_format.model()
-            if model:
-                item = model.item(idx)
-                item.setEnabled(not keep)
-        if keep and self.opt_format.currentText() == "csv":
-            self.opt_format.setCurrentText("list")
-
-    def _run_optimize(self) -> None:
-        source = self.optimize_input.get_data_source()
-        if source is None:
-            return
-
-        ipv4_only = self.opt_ipv4_only.isChecked()
-        ipv6_only = self.opt_ipv6_only.isChecked()
-        keep_comments = self.opt_keep_comments.isChecked()
-        strict = self.opt_strict.isChecked()
-        fmt = self.opt_format.currentText()
-
-        if keep_comments and fmt == "csv":
-            self.output_panel.set_text("Error: Cannot use keep-comments with CSV format.")
-            return
-
-        self.optimize_run_button.setEnabled(False)
-        self.progress_panel.set_busy(True)
-        self.progress_panel.set_status("Running optimize...")
-
-        worker = Worker(run_optimize, source, ipv4_only, ipv6_only, keep_comments, strict)
-        worker.signals.result.connect(self._on_optimize_result)
-        worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(self._on_finished)
-        self.threadpool.start(worker)
-
-    def _on_optimize_result(self, result: OptimizeResult) -> None:
-        fmt = self.opt_format.currentText()
-        try:
-            if result.keep_comments:
-                text = format_prefixes([], fmt, commented=result.commented_prefixes)
-            else:
-                text = format_prefixes(result.prefixes, fmt)
-            self.output_panel.set_text(text)
-            self.progress_panel.set_status(
-                f"Done. Input: {result.input_count}, Output: {result.output_count}"
-            )
-        except Exception as e:
-            self.output_panel.set_text(f"Formatting error: {e}")
-
     def _build_add_mode(self) -> None:
+        """Создает страницу режима добавления нового префикса."""
         self.add_page = QWidget()
         layout = QVBoxLayout(self.add_page)
 
@@ -162,6 +138,7 @@ class OptimizeTab(BaseOperationTab):
             file_label="Input file",
             text_placeholder="Paste existing prefixes here...",
         )
+
         self.add_prefix_widget = PrefixInputWidget(
             title="New prefix",
             label="Prefix to add",
@@ -169,13 +146,16 @@ class OptimizeTab(BaseOperationTab):
         )
 
         options = OptionsGroup("Options")
+
         self.add_keep_comments = QCheckBox("Keep comments")
+
         self.add_format = QComboBox()
         self.add_format.addItems(["list", "csv"])
 
         form = QFormLayout()
         form.addRow(self.add_keep_comments)
         form.addRow("Output format:", self.add_format)
+
         options.add_layout(form)
 
         run_row = QHBoxLayout()
@@ -194,104 +174,232 @@ class OptimizeTab(BaseOperationTab):
         self.add_prefix_widget.value_changed.connect(self._update_add_state)
         self.add_keep_comments.toggled.connect(self._update_add_format_state)
         self.add_run_button.clicked.connect(self._run_add)
+
         self._update_add_state()
         self._update_add_format_state()
 
-    def _update_add_state(self, _=None) -> None:
-        self.add_run_button.setEnabled(
-            self.add_input.get_data_source() is not None and
-            self.add_prefix_widget.get_value() is not None
+    def _sync_format_state(
+        self,
+        keep_checkbox: QCheckBox,
+        format_combo: QComboBox,
+    ) -> None:
+        """
+        Синхронизирует доступность форматов с режимом сохранения комментариев.
+
+        При активном keep-comments формат CSV блокируется.
+        """
+        keep_comments = keep_checkbox.isChecked()
+        csv_index = format_combo.findText("csv")
+
+        if csv_index >= 0:
+            model = format_combo.model()
+            if model is not None:
+                item = model.item(csv_index)
+                if item is not None:
+                    item.setEnabled(not keep_comments)
+
+        if keep_comments and format_combo.currentText() == "csv":
+            format_combo.setCurrentText("list")
+
+    def _update_optimize_state(self, _: Any = None) -> None:
+        """Обновляет доступность кнопки запуска режима оптимизации."""
+        self.optimize_run_button.setEnabled(
+            self.optimize_input.get_data_source() is not None
         )
 
-    def _update_add_format_state(self, _=None) -> None:
-        keep = self.add_keep_comments.isChecked()
-        idx = self.add_format.findText("csv")
-        if idx >= 0:
-            model = self.add_format.model()
-            if model:
-                item = model.item(idx)
-                item.setEnabled(not keep)
-        if keep and self.add_format.currentText() == "csv":
-            self.add_format.setCurrentText("list")
+    def _update_optimize_format_state(self, _: Any = None) -> None:
+        """Обновляет доступность форматов для режима оптимизации."""
+        self._sync_format_state(self.opt_keep_comments, self.opt_format)
+
+    def _update_add_state(self, _: Any = None) -> None:
+        """Обновляет доступность кнопки запуска режима добавления."""
+        self.add_run_button.setEnabled(
+            self.add_input.get_data_source() is not None
+            and self.add_prefix_widget.get_value() is not None
+        )
+
+    def _update_add_format_state(self, _: Any = None) -> None:
+        """Обновляет доступность форматов для режима добавления."""
+        self._sync_format_state(self.add_keep_comments, self.add_format)
+
+    def _set_running_state(self, status_text: str) -> None:
+        """
+        Переводит вкладку в состояние выполнения.
+
+        Блокирует кнопки запуска и переключатели режимов.
+        """
+        self.optimize_run_button.setEnabled(False)
+        self.add_run_button.setEnabled(False)
+        self.optimize_radio.setEnabled(False)
+        self.add_radio.setEnabled(False)
+        self.progress_panel.set_busy(True)
+        self.progress_panel.set_status(status_text)
+
+    def _restore_idle_state(self) -> None:
+        """Восстанавливает доступность элементов управления после завершения задачи."""
+        self.optimize_radio.setEnabled(True)
+        self.add_radio.setEnabled(True)
+        self.progress_panel.set_busy(False)
+        self._update_optimize_state()
+        self._update_add_state()
+
+    def _run_optimize(self) -> None:
+        """Собирает параметры и запускает задачу оптимизации в фоновом потоке."""
+        source = self.optimize_input.get_data_source()
+        if source is None:
+            return
+
+        ipv4_only = self.opt_ipv4_only.isChecked()
+        ipv6_only = self.opt_ipv6_only.isChecked()
+        keep_comments = self.opt_keep_comments.isChecked()
+        strict = self.opt_strict.isChecked()
+        output_format = self.opt_format.currentText()
+
+        if keep_comments and output_format == "csv":
+            self.output_panel.set_text(
+                "Error: Cannot use keep-comments with CSV format."
+            )
+            self.progress_panel.set_status("Error")
+            return
+
+        self._set_running_state("Running optimize...")
+
+        worker = Worker(
+            run_optimize,
+            source,
+            output_format,
+            ipv4_only,
+            ipv6_only,
+            keep_comments,
+            strict,
+        )
+        worker.signals.result.connect(self._render_result)
+        worker.signals.error.connect(self._on_error)
+        worker.signals.finished.connect(self._on_finished)
+        self.threadpool.start(worker)
 
     def _run_add(self) -> None:
+        """Собирает параметры и запускает задачу добавления префикса в фоновом потоке."""
         source = self.add_input.get_data_source()
         new_prefix = self.add_prefix_widget.get_value()
         if source is None or new_prefix is None:
             return
 
         keep_comments = self.add_keep_comments.isChecked()
-        fmt = self.add_format.currentText()
+        output_format = self.add_format.currentText()
 
-        if keep_comments and fmt == "csv":
-            self.output_panel.set_text("Error: Cannot use keep-comments with CSV format.")
+        if keep_comments and output_format == "csv":
+            self.output_panel.set_text(
+                "Error: Cannot use keep-comments with CSV format."
+            )
+            self.progress_panel.set_status("Error")
             return
 
-        self.add_run_button.setEnabled(False)
-        self.progress_panel.set_busy(True)
-        self.progress_panel.set_status("Adding prefix...")
+        self._set_running_state("Adding prefix...")
 
-        worker = Worker(run_add, source, new_prefix, keep_comments)
-        worker.signals.result.connect(self._on_add_result)
+        worker = Worker(
+            run_add,
+            source,
+            new_prefix,
+            output_format,
+            keep_comments,
+        )
+        worker.signals.result.connect(self._render_result)
         worker.signals.error.connect(self._on_error)
         worker.signals.finished.connect(self._on_finished)
         self.threadpool.start(worker)
 
-    def _on_add_result(self, result: OptimizeResult) -> None:
-        fmt = self.add_format.currentText()
-        try:
-            if result.keep_comments:
-                text = format_prefixes([], fmt, commented=result.commented_prefixes)
-            else:
-                text = format_prefixes(result.prefixes, fmt)
-            self.output_panel.set_text(text)
-            self.progress_panel.set_status(
-                f"Done. Input: {result.input_count}, Output: {result.output_count}"
-            )
-        except Exception as e:
-            self.output_panel.set_text(f"Formatting error: {e}")
+    def _render_result(self, result: OptimizeResult) -> None:
+        """
+        Отображает предварительно отформатированный результат из фонового потока.
+
+        Args:
+            result: Результат с готовой строкой formatted_text.
+        """
+        self.output_panel.set_text(result.formatted_text)
+        self.progress_panel.set_status(
+            f"Done. Input: {result.input_count}, Output: {result.output_count}"
+        )
 
     def _on_error(self, error_msg: str) -> None:
+        """
+        Отображает сообщение об ошибке фоновой задачи.
+
+        Args:
+            error_msg: Текст ошибки.
+        """
         self.output_panel.set_text(f"Error: {error_msg}")
         self.progress_panel.set_status("Error")
 
     def _on_finished(self) -> None:
+        """Восстанавливает интерфейс после завершения фоновой задачи."""
+        self._restore_idle_state()
+
+    def trigger_open(self) -> None:
+        """Открывает диалог выбора файла для активного режима."""
         if self.optimize_radio.isChecked():
-            self.optimize_run_button.setEnabled(True)
-        else:
-            self.add_run_button.setEnabled(True)
-        self.progress_panel.set_busy(False)
+            if hasattr(self.optimize_input, "browse_button"):
+                self.optimize_input.browse_button.click()
+            return
+        if hasattr(self.add_input, "browse_button"):
+            self.add_input.browse_button.click()
+
+    def trigger_run(self) -> None:
+        """Запускает операцию активного режима."""
+        if self.optimize_radio.isChecked():
+            if self.optimize_run_button.isEnabled():
+                self.optimize_run_button.click()
+            return
+        if self.add_run_button.isEnabled():
+            self.add_run_button.click()
 
     def save_settings(self) -> dict:
+        """
+        Сохраняет состояние элементов управления вкладки.
+
+        Returns:
+            Словарь с параметрами обоих режимов.
+        """
         return {
-            'mode': 'optimize' if self.optimize_radio.isChecked() else 'add',
-            'opt_ipv4_only': self.opt_ipv4_only.isChecked(),
-            'opt_ipv6_only': self.opt_ipv6_only.isChecked(),
-            'opt_keep_comments': self.opt_keep_comments.isChecked(),
-            'opt_strict': self.opt_strict.isChecked(),
-            'opt_format': self.opt_format.currentText(),
-            'add_keep_comments': self.add_keep_comments.isChecked(),
-            'add_format': self.add_format.currentText(),
+            "mode": "optimize" if self.optimize_radio.isChecked() else "add",
+            "opt_ipv4_only": self.opt_ipv4_only.isChecked(),
+            "opt_ipv6_only": self.opt_ipv6_only.isChecked(),
+            "opt_keep_comments": self.opt_keep_comments.isChecked(),
+            "opt_strict": self.opt_strict.isChecked(),
+            "opt_format": self.opt_format.currentText(),
+            "add_keep_comments": self.add_keep_comments.isChecked(),
+            "add_format": self.add_format.currentText(),
         }
 
     def load_settings(self, state: dict) -> None:
+        """
+        Восстанавливает состояние элементов управления из словаря.
+
+        Args:
+            state: Словарь с сохраненными параметрами.
+        """
         if not state:
             return
-        mode = state.get('mode', 'optimize')
-        if mode == 'add':
+
+        mode = state.get("mode", "optimize")
+        if mode == "add":
             self.add_radio.setChecked(True)
         else:
             self.optimize_radio.setChecked(True)
-        self.opt_ipv4_only.setChecked(state.get('opt_ipv4_only', False))
-        self.opt_ipv6_only.setChecked(state.get('opt_ipv6_only', False))
-        self.opt_keep_comments.setChecked(state.get('opt_keep_comments', False))
-        self.opt_strict.setChecked(state.get('opt_strict', False))
-        opt_fmt = state.get('opt_format', 'list')
-        idx = self.opt_format.findText(opt_fmt)
-        if idx >= 0:
-            self.opt_format.setCurrentIndex(idx)
-        self.add_keep_comments.setChecked(state.get('add_keep_comments', False))
-        add_fmt = state.get('add_format', 'list')
-        idx2 = self.add_format.findText(add_fmt)
-        if idx2 >= 0:
-            self.add_format.setCurrentIndex(idx2)
+
+        self.opt_ipv4_only.setChecked(state.get("opt_ipv4_only", False))
+        self.opt_ipv6_only.setChecked(state.get("opt_ipv6_only", False))
+        self.opt_keep_comments.setChecked(state.get("opt_keep_comments", False))
+        self.opt_strict.setChecked(state.get("opt_strict", False))
+
+        optimize_format = state.get("opt_format", "list")
+        optimize_index = self.opt_format.findText(optimize_format)
+        if optimize_index >= 0:
+            self.opt_format.setCurrentIndex(optimize_index)
+
+        self.add_keep_comments.setChecked(state.get("add_keep_comments", False))
+
+        add_format = state.get("add_format", "list")
+        add_index = self.add_format.findText(add_format)
+        if add_index >= 0:
+            self.add_format.setCurrentIndex(add_index)

@@ -14,6 +14,7 @@ class OptimizeResult:
     keep_comments: bool = False
     input_count: int = 0
     output_count: int = 0
+    formatted_text: str = ""
 
 
 @dataclass

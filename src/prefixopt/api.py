@@ -13,7 +13,7 @@
 import ipaddress
 import itertools
 from pathlib import Path
-from typing import Union, Iterable, Iterator, List, Tuple, Dict, Optional, Any
+from typing import Union, Iterable, Iterator, List, Tuple, Dict
 
 # Импорт базовых типов
 from .core.ip_utils import IPNet, normalize_prefix, is_subnet_of

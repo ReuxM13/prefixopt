@@ -1,13 +1,14 @@
 """
-Сервисный слой GUI.
+Сервисный слой для интеграции ядра (core) с графическим интерфейсом.
 
-Принимает параметры от GUI, вызывает ядро prefixopt
-и возвращает структурированные результаты (models.py).
-
+Каждая функция выполняет полный цикл обработки: загрузка данных,
+математические операции и форматирование результата в строку.
+Все функции вызываются исключительно из фоновых потоков (Worker).
 """
+
 import ipaddress
 from pathlib import Path
-from typing import Union, Optional, List, Tuple, Iterable, Iterator
+from typing import Union, Optional, List, Tuple, Iterable, Iterator, Dict, Any
 
 from ..core.ip_utils import IPNet, normalize_prefix, is_subnet_of
 from ..core.pipeline import process_prefixes
@@ -16,6 +17,7 @@ from ..core.operations.subtractor import subtract_networks
 from ..core.operations.subnetter import split_network
 from ..core.operations.diff import calculate_diff
 from ..core.ip_counter import count_unique_ips, get_prefix_statistics
+from .output_formatter import format_prefixes
 from ..data.file_reader import (
     read_networks,
     extract_prefixes_from_text,
@@ -35,9 +37,6 @@ from .models import (
     CheckResult,
 )
 
-
-# Тип входных данных для сервисов:
-# Path к файлу или строка с текстом.
 InputSource = Union[Path, str]
 
 
@@ -68,10 +67,7 @@ def _load_with_comments(
     strict: bool = False,
 ) -> Iterator[Tuple[IPNet, str]]:
     """
-    Загружает сети с комментариями.
-
-    Если источник — файл, читает построчно с сохранением комментариев.
-    Если источник — текст, комментарии сохраняются по тем же правилам.
+    Загружает сети с комментариями из файла или текстовой строки.
 
     Args:
         source: Путь к файлу или текст.
@@ -109,10 +105,9 @@ def _deduplicate_commented(
     ipv6_only: bool = False,
 ) -> List[Tuple[IPNet, str]]:
     """
-    Дедупликация префиксов с комментариями.
+    Дедупликация префиксов с сохранением комментариев.
 
-    Если один и тот же префикс встречается несколько раз,
-    приоритет отдается непустому комментарию.
+    При дублировании приоритет отдается непустому комментарию.
 
     Returns:
         Отсортированный список кортежей (IPNet, comment).
@@ -143,26 +138,40 @@ def _deduplicate_commented(
 
 def run_optimize(
     source: InputSource,
+    fmt: str,
     ipv4_only: bool = False,
     ipv6_only: bool = False,
     keep_comments: bool = False,
     strict: bool = False,
 ) -> OptimizeResult:
     """
-    Выполняет оптимизацию списка префиксов.
+    Выполняет полный цикл оптимизации префиксов.
 
-    В режиме keep_comments выполняется только дедупликация и сортировка.
-    В обычном режиме — полный цикл: сортировка, удаление вложенных, агрегация.
+    Загружает данные, выполняет математическую обработку и формирует
+    готовую текстовую строку вывода. Результат передается в GUI-поток
+    как легковесный объект с formatted_text.
+
+    Args:
+        source: Источник данных (путь к файлу или текст).
+        fmt: Формат вывода ("list" или "csv").
+        ipv4_only: Оставить только IPv4.
+        ipv6_only: Оставить только IPv6.
+        keep_comments: Режим дедупликации с сохранением комментариев.
+        strict: Строгая валидация host bits.
+
+    Returns:
+        OptimizeResult с готовой строкой formatted_text и статистикой.
     """
     if keep_comments:
         raw = _load_with_comments(source, strict=strict)
         commented = _deduplicate_commented(raw, ipv4_only=ipv4_only, ipv6_only=ipv6_only)
+        formatted_text = format_prefixes([], fmt, commented=commented)
 
         return OptimizeResult(
-            commented_prefixes=commented,
             keep_comments=True,
             input_count=len(commented),
             output_count=len(commented),
+            formatted_text=formatted_text,
         )
 
     raw_list = list(_load_networks(source, strict=strict))
@@ -177,22 +186,33 @@ def run_optimize(
         ipv6_only=ipv6_only,
     )
     result_list = list(result_iter)
+    formatted_text = format_prefixes(result_list, fmt)
 
     return OptimizeResult(
-        prefixes=result_list,
         keep_comments=False,
         input_count=input_count,
         output_count=len(result_list),
+        formatted_text=formatted_text,
     )
 
 
 def run_add(
     source: InputSource,
     new_prefix: str,
+    fmt: str,
     keep_comments: bool = False,
 ) -> OptimizeResult:
     """
-    Добавляет новый префикс в список.
+    Добавляет новый префикс в список и выполняет реоптимизацию.
+
+    Args:
+        source: Источник данных (путь к файлу или текст).
+        new_prefix: Строковое представление добавляемого префикса.
+        fmt: Формат вывода ("list" или "csv").
+        keep_comments: Режим с сохранением комментариев.
+
+    Returns:
+        OptimizeResult с готовой строкой formatted_text и статистикой.
     """
     net_to_add = normalize_prefix(new_prefix)
 
@@ -203,13 +223,17 @@ def run_add(
         exists = any(item[0] == net_to_add for item in commented)
         if not exists:
             commented.append((net_to_add, f"# Added manually: {new_prefix}"))
-            commented.sort(key=lambda x: (x[0].version, int(x[0].network_address), x[0].prefixlen))
+            commented.sort(
+                key=lambda x: (x[0].version, int(x[0].network_address), x[0].prefixlen)
+            )
+
+        formatted_text = format_prefixes([], fmt, commented=commented)
 
         return OptimizeResult(
-            commented_prefixes=commented,
             keep_comments=True,
             input_count=len(commented),
             output_count=len(commented),
+            formatted_text=formatted_text,
         )
 
     data = list(_load_networks(source))
@@ -219,12 +243,13 @@ def run_add(
         data.append(net_to_add)
 
     result = list(process_prefixes(data, sort=True, remove_nested=True, aggregate=True))
+    formatted_text = format_prefixes(result, fmt)
 
     return OptimizeResult(
-        prefixes=result,
         keep_comments=False,
         input_count=input_count + 1,
         output_count=len(result),
+        formatted_text=formatted_text,
     )
 
 
@@ -240,6 +265,19 @@ def run_filter(
 ) -> FilterResult:
     """
     Фильтрует список, удаляя указанные категории сетей.
+
+    Args:
+        source: Источник данных.
+        exclude_private: Удалить RFC 1918.
+        exclude_loopback: Удалить loopback.
+        exclude_link_local: Удалить link-local.
+        exclude_multicast: Удалить multicast.
+        exclude_reserved: Удалить reserved.
+        bogons: Удалить bogons.
+        strict: Строгая валидация.
+
+    Returns:
+        FilterResult со списком отфильтрованных префиксов и статистикой.
     """
     raw = list(_load_networks(source, strict=strict))
     original_count = len(raw)
@@ -275,6 +313,16 @@ def run_merge(
 ) -> MergeResult:
     """
     Объединяет два источника данных.
+
+    Args:
+        source1: Первый источник.
+        source2: Второй источник.
+        keep_comments: Режим дедупликации с комментариями.
+        append_comment: Текст для добавления к комментариям source1.
+        strict: Строгая валидация.
+
+    Returns:
+        MergeResult с объединенным списком.
     """
     if keep_comments:
         unique_map: dict[str, str] = {}
@@ -354,7 +402,7 @@ def run_merge(
 
 
 def _split_comment(comment: str) -> List[str]:
-    """Разбивает комментарий на части по разделителю |."""
+    """Разбивает комментарий на части по разделителю '|'."""
     if not comment:
         return []
     raw = comment.strip()
@@ -366,7 +414,7 @@ def _split_comment(comment: str) -> List[str]:
 
 
 def _join_comment(parts: List[str]) -> str:
-    """Собирает части комментария в строку."""
+    """Собирает части комментария в строку с разделителем '|'."""
     if not parts:
         return ""
     return f"# {' | '.join(parts)}"
@@ -381,6 +429,16 @@ def run_intersect(
 ) -> IntersectReport:
     """
     Находит пересечения между двумя списками или внутри одного.
+
+    Args:
+        source1: Первый источник.
+        source2: Второй источник (None для self-intersect).
+        strict: Строгая валидация.
+        name1: Имя первого источника для отчета.
+        name2: Имя второго источника для отчета.
+
+    Returns:
+        IntersectReport с результатами анализа пересечений.
     """
     list1 = list(_load_networks(source1, strict=strict))
     self_mode = source2 is None
@@ -411,9 +469,9 @@ def run_intersect(
     for net1, net2 in raw_overlaps:
         if net1 == net2:
             continue
-        if net1.subnet_of(net2):  # type: ignore
+        if net1.subnet_of(net2):
             partial_overlaps.append((net1, net2, name1, name2 if not self_mode else name1))
-        elif net2.subnet_of(net1):  # type: ignore
+        elif net2.subnet_of(net1):
             partial_overlaps.append((net2, net1, name2 if not self_mode else name1, name1))
         else:
             partial_overlaps.append((net1, net2, name1, name2 if not self_mode else name1))
@@ -422,9 +480,9 @@ def run_intersect(
     for net1, net2 in raw_overlaps:
         if net1 == net2:
             continue
-        if net1.subnet_of(net2):  # type: ignore
+        if net1.subnet_of(net2):
             intersection_fragments.append(net1)
-        elif net2.subnet_of(net1):  # type: ignore
+        elif net2.subnet_of(net1):
             intersection_fragments.append(net2)
 
     volume_intersection = count_unique_ips(intersection_fragments) if intersection_fragments else 0
@@ -458,7 +516,11 @@ def _find_two_list_overlaps(
     sorted1: List[IPNet],
     sorted2: List[IPNet],
 ) -> List[Tuple[IPNet, IPNet]]:
-    """Линейный поиск пересечений между двумя отсортированными списками."""
+    """
+    Линейный поиск пересечений между двумя отсортированными списками.
+
+    Использует two-pointer алгоритм по диапазонам адресов.
+    """
     overlaps: List[Tuple[IPNet, IPNet]] = []
     i, j = 0, 0
     len1, len2 = len(sorted1), len(sorted2)
@@ -496,7 +558,11 @@ def _find_two_list_overlaps(
 def _find_self_overlaps(
     sorted_list: List[IPNet],
 ) -> List[Tuple[IPNet, IPNet]]:
-    """Поиск пересечений внутри одного отсортированного списка."""
+    """
+    Поиск пересечений внутри одного отсортированного списка.
+
+    Для каждого элемента проверяются последующие до выхода за broadcast-границу.
+    """
     overlaps: List[Tuple[IPNet, IPNet]] = []
     length = len(sorted_list)
 
@@ -525,7 +591,19 @@ def run_diff(
     strict: bool = False,
 ) -> DiffReport:
     """
-    Сравнивает два набора данных.
+    Семантическое сравнение двух наборов данных.
+
+    Оба набора нормализуются перед сравнением (сортировка, агрегация).
+
+    Args:
+        new_source: Новый набор данных.
+        old_source: Старый набор данных.
+        ipv4_only: Оставить только IPv4.
+        ipv6_only: Оставить только IPv6.
+        strict: Строгая валидация.
+
+    Returns:
+        DiffReport со списками добавленных, удаленных и неизменных префиксов.
     """
     def prepare(src: InputSource) -> List[IPNet]:
         raw = _load_networks(src, strict=strict)
@@ -559,7 +637,18 @@ def run_exclude(
     strict: bool = False,
 ) -> ExcludeResult:
     """
-    Вычитает target из source.
+    Вычитает target из source (hole punching).
+
+    Args:
+        source: Исходный список.
+        target: Список для исключения.
+        keep_comments: Наследовать комментарии от родительских сетей.
+        ipv4_only: Оставить только IPv4.
+        ipv6_only: Оставить только IPv6.
+        strict: Строгая валидация.
+
+    Returns:
+        ExcludeResult с результатом вычитания.
     """
     exclude_list = list(_load_networks(target, strict=strict))
 
@@ -621,6 +710,14 @@ def run_split(
 ) -> SplitResult:
     """
     Разбивает сети на подсети указанной длины.
+
+    Args:
+        source: Источник данных.
+        target_length: Целевая длина префикса.
+        strict: Строгая валидация.
+
+    Returns:
+        SplitResult со списком подсетей.
     """
     all_subnets: List[IPNet] = []
 
@@ -637,6 +734,13 @@ def run_split(
 def run_stats(source: InputSource, strict: bool = False) -> StatsResult:
     """
     Собирает статистику по списку префиксов.
+
+    Args:
+        source: Источник данных.
+        strict: Строгая валидация.
+
+    Returns:
+        StatsResult с метриками компрессии, подсчетом уникальных адресов и дубликатов.
     """
     data = list(_load_networks(source, strict=strict))
     raw_stats = get_prefix_statistics(data)
@@ -644,7 +748,6 @@ def run_stats(source: InputSource, strict: bool = False) -> StatsResult:
     ipv4_count = len([p for p in data if p.version == 4])
     ipv6_count = len([p for p in data if p.version == 6])
 
-    # Добавляем дубликаты
     from prefixopt.core.ip_counter import get_duplicate_prefixes
     duplicates = get_duplicate_prefixes(data)
 
@@ -668,6 +771,14 @@ def run_check(
 ) -> CheckResult:
     """
     Проверяет, входит ли target в список source.
+
+    Args:
+        target: IP-адрес или префикс для проверки.
+        source: Источник данных для поиска.
+        strict: Строгая валидация.
+
+    Returns:
+        CheckResult с результатом проверки и списком покрывающих сетей.
     """
     try:
         if "/" in target:
@@ -687,7 +798,7 @@ def run_check(
             if check_item in net:
                 containing.append(net)
         else:
-            if is_subnet_of(check_item, net):  # type: ignore
+            if is_subnet_of(check_item, net):
                 containing.append(net)
 
     return CheckResult(
@@ -703,13 +814,19 @@ def run_multi_intersect(
     source_names: Optional[List[str]] = None,
 ) -> MultiIntersectReport:
     """
-    Находит префиксы, присутствующие хотя бы в одном из источников, и строит карту присутствия.
-    Возвращает полный список всех префиксов и карту, без фильтрации.
+    Находит карту присутствия префиксов по нескольким источникам.
+
+    Args:
+        *sources: Два и более источника данных.
+        strict: Строгая валидация.
+        source_names: Имена источников для отчета.
+
+    Returns:
+        MultiIntersectReport с картой присутствия и статистикой.
     """
     if len(sources) < 2:
         raise ValueError("Multi-intersect requires at least 2 sources")
 
-    # Загружаем и оптимизируем каждый источник
     lists = []
     volumes = []
     for source in sources:
@@ -722,20 +839,19 @@ def run_multi_intersect(
     if source_names is None:
         source_names = [f"Source {i+1}" for i in range(num_sources)]
 
-    # Частотный словарь: prefix_str -> количество источников
     freq: Dict[str, int] = {}
     for lst in lists:
         for net in lst:
             key = str(net)
             freq[key] = freq.get(key, 0) + 1
 
-    # Карта присутствия: prefix_str -> список индексов источников, где встречается
     sets = [set(lst) for lst in lists]
     presence_map: Dict[str, List[int]] = {}
     for key in freq:
-        presence_map[key] = [idx for idx in range(num_sources) if key in {str(n) for n in sets[idx]}]
+        presence_map[key] = [
+            idx for idx in range(num_sources) if key in {str(n) for n in sets[idx]}
+        ]
 
-    # Все уникальные префиксы (ключи словаря)
     all_prefixes = [ipaddress.ip_network(key, strict=False) for key in freq]
     all_prefixes = sort_networks(all_prefixes)
 
