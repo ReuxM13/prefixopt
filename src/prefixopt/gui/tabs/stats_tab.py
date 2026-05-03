@@ -4,15 +4,12 @@
 
 from typing import Any
 
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
-    QVBoxLayout,
 )
 
 from .base_operation_tab import BaseOperationTab
@@ -20,6 +17,54 @@ from ..models import StatsResult
 from ..services import run_stats
 from ..widgets.input_panel import InputPanel
 from ..workers import Worker
+
+_STATS_CSS = """
+<style>
+    body {{
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 10pt;
+        color: {text};
+        background-color: {bg};
+        margin: 6px;
+    }}
+    h2 {{
+        color: {heading};
+        margin: 8px 0 6px 0;
+        font-size: 11pt;
+        border-bottom: 1px solid {border};
+        padding-bottom: 4px;
+    }}
+    h3 {{
+        color: {subheading};
+        margin: 8px 0 4px 0;
+        font-size: 10pt;
+    }}
+    table {{
+        border-collapse: collapse;
+        width: 100%;
+        margin-bottom: 10px;
+    }}
+    th {{
+        background-color: {th_bg};
+        color: {th_text};
+        text-align: left;
+        padding: 4px 10px;
+        border: 1px solid {border};
+        font-weight: bold;
+    }}
+    td {{
+        padding: 3px 10px;
+        border: 1px solid {cell_border};
+    }}
+    td.metric {{ color: {metric}; }}
+    td.value {{ color: {value}; font-weight: bold; text-align: right; }}
+    tr:nth-child(even) {{ background-color: {row_even}; }}
+    tr:nth-child(odd) {{ background-color: {row_odd}; }}
+    .dup {{ color: {dup}; font-family: Consolas, monospace; }}
+    .muted {{ color: {muted}; }}
+    p {{ margin: 2px 0; }}
+</style>
+"""
 
 
 class StatsTab(BaseOperationTab):
@@ -52,18 +97,136 @@ class StatsTab(BaseOperationTab):
         controls_row.addWidget(self.run_button)
         self.control_layout.addLayout(controls_row)
 
-        table_group = QGroupBox("Statistics preview")
-        table_layout = QVBoxLayout(table_group)
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["Metric", "Value"])
-        table_layout.addWidget(self.table)
-        self.control_layout.addWidget(table_group)
-
         self._setup_splitter(self.output_panel)
 
         self.run_button.clicked.connect(self._run_stats)
         self.input_panel.source_changed.connect(self._update_state)
         self._update_state()
+
+    def _is_dark_theme(self) -> bool:
+        """
+        Определяет активную тему по яркости фона палитры.
+
+        Returns:
+            True для тёмной темы.
+        """
+        bg = self.palette().color(QPalette.ColorRole.Window)
+        luminance = (
+            0.299 * bg.redF()
+            + 0.587 * bg.greenF()
+            + 0.114 * bg.blueF()
+        )
+        return luminance < 0.5
+
+    def _build_html(self, result: StatsResult) -> str:
+        """
+        Формирует HTML-отчёт статистики.
+
+        Args:
+            result: Результат сбора статистики.
+
+        Returns:
+            HTML-строка отчёта.
+        """
+        dark = self._is_dark_theme()
+
+        if dark:
+            c = {
+                "text": "#d4d4d4",
+                "bg": "#1e1e1e",
+                "heading": "#569cd6",
+                "subheading": "#4ec9b0",
+                "border": "#444",
+                "cell_border": "#3a3a3a",
+                "th_bg": "#2d2d30",
+                "th_text": "#9cdcfe",
+                "metric": "#d4d4d4",
+                "value": "#b5cea8",
+                "row_even": "#252526",
+                "row_odd": "#1e1e1e",
+                "dup": "#ce9178",
+                "muted": "#808080",
+            }
+        else:
+            c = {
+                "text": "#1e1e1e",
+                "bg": "#ffffff",
+                "heading": "#0078d4",
+                "subheading": "#107c10",
+                "border": "#d0d0d0",
+                "cell_border": "#e0e0e0",
+                "th_bg": "#f0f0f0",
+                "th_text": "#0078d4",
+                "metric": "#1e1e1e",
+                "value": "#107c10",
+                "row_even": "#f9f9f9",
+                "row_odd": "#ffffff",
+                "dup": "#a31515",
+                "muted": "#6e6e6e",
+            }
+
+        css = _STATS_CSS.format(**c)
+        show = self.show_details.isChecked()
+
+        parts = [css, "<h2>Prefix List Statistics</h2>"]
+
+        metrics = [
+            ("Original prefix count", f"{result.original_prefix_count:,}"),
+            ("Optimized prefix count", f"{result.optimized_prefix_count:,}"),
+            ("Compression ratio", f"{result.compression_ratio_percent:.2f}%"),
+            ("Original total IPs", f"{result.original_total_ips:,}"),
+            ("Unique IPs", f"{result.unique_ips:,}"),
+            ("Addresses saved", f"{result.addresses_saved:,}"),
+        ]
+
+        if show:
+            metrics.append(
+                ("IPv4 prefixes", f"{result.ipv4_count:,}")
+            )
+            metrics.append(
+                ("IPv6 prefixes", f"{result.ipv6_count:,}")
+            )
+            if result.duplicates:
+                metrics.append(
+                    ("Duplicate prefixes", f"{len(result.duplicates):,}")
+                )
+
+        parts.append("<table>")
+        parts.append(
+            "<tr><th>Metric</th><th style='text-align:right;'>Value</th></tr>"
+        )
+        for metric, value in metrics:
+            parts.append(
+                f"<tr>"
+                f'<td class="metric">{metric}</td>'
+                f'<td class="value">{value}</td>'
+                f"</tr>"
+            )
+        parts.append("</table>")
+
+        if show and result.duplicates:
+            parts.append(f"<h3>Duplicate Prefixes ({len(result.duplicates):,})</h3>")
+            parts.append("<table>")
+            parts.append(
+                "<tr><th>Prefix</th>"
+                "<th style='text-align:right;'>Count</th></tr>"
+            )
+            for prefix, count in result.duplicates:
+                parts.append(
+                    f"<tr>"
+                    f'<td class="dup">{prefix}</td>'
+                    f'<td class="value">{count}</td>'
+                    f"</tr>"
+                )
+            parts.append("</table>")
+
+        if not show:
+            parts.append(
+                '<p class="muted">Enable "Show details" to see '
+                "IPv4/IPv6 breakdown and duplicate prefixes.</p>"
+            )
+
+        return "".join(parts)
 
     def _update_state(self, _: Any = None) -> None:
         """Обновляет доступность кнопки запуска."""
@@ -84,88 +247,16 @@ class StatsTab(BaseOperationTab):
 
     def _on_stats_result(self, result: StatsResult) -> None:
         """
-        Заполняет таблицу статистикой и выводит детали.
+        Формирует HTML-отчёт и отображает его в панели вывода.
 
         Args:
             result: Результат сбора статистики.
         """
         self._expand_output()
-        show = self.show_details.isChecked()
-
-        row_count = 6
-        if show:
-            row_count += 1
-            if result.duplicates:
-                row_count += 1
-
-        self.table.setRowCount(row_count)
-        self.table.setItem(
-            0, 0, QTableWidgetItem("Original prefix count")
+        self.output_panel.set_html(self._build_html(result))
+        self.progress_panel.set_status(
+            f"Done. {result.original_prefix_count:,} prefixes analyzed"
         )
-        self.table.setItem(
-            0, 1, QTableWidgetItem(str(result.original_prefix_count))
-        )
-        self.table.setItem(
-            1, 0, QTableWidgetItem("Optimized prefix count")
-        )
-        self.table.setItem(
-            1, 1, QTableWidgetItem(str(result.optimized_prefix_count))
-        )
-        self.table.setItem(2, 0, QTableWidgetItem("Compression ratio"))
-        self.table.setItem(
-            2, 1, QTableWidgetItem(f"{result.compression_ratio_percent}%")
-        )
-        self.table.setItem(3, 0, QTableWidgetItem("Original total IPs"))
-        self.table.setItem(
-            3, 1, QTableWidgetItem(f"{result.original_total_ips:,}")
-        )
-        self.table.setItem(4, 0, QTableWidgetItem("Unique IPs"))
-        self.table.setItem(
-            4, 1, QTableWidgetItem(f"{result.unique_ips:,}")
-        )
-        self.table.setItem(5, 0, QTableWidgetItem("Addresses saved"))
-        self.table.setItem(
-            5, 1, QTableWidgetItem(f"{result.addresses_saved:,}")
-        )
-
-        detail_lines = []
-
-        if show:
-            self.table.setItem(
-                6, 0, QTableWidgetItem("IPv4 / IPv6 count")
-            )
-            self.table.setItem(
-                6, 1,
-                QTableWidgetItem(
-                    f"{result.ipv4_count} / {result.ipv6_count}"
-                ),
-            )
-            if result.duplicates:
-                self.table.setItem(
-                    7, 0, QTableWidgetItem("Duplicate prefixes")
-                )
-                self.table.setItem(
-                    7, 1, QTableWidgetItem(str(len(result.duplicates)))
-                )
-                detail_lines.append("Duplicate Prefixes:")
-                for prefix, count in result.duplicates:
-                    detail_lines.append(f"  {prefix}  ({count} times)")
-            else:
-                self.table.setRowCount(row_count - 1)
-        else:
-            detail_lines.append(
-                "Details hidden. Enable 'Show details' to see "
-                "IPv4/IPv6 counts and duplicate prefixes."
-            )
-
-        self.table.resizeColumnsToContents()
-
-        if detail_lines:
-            self.output_panel.set_text("\n".join(detail_lines))
-        else:
-            self.output_panel.clear()
-
-        self.progress_panel.set_status("Done")
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""

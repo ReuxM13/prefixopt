@@ -6,14 +6,14 @@
 для выполнения ресурсоемких задач без блокировки основного потока.
 """
 
-from pathlib import Path
 import logging
-from .. import LOG_DIR
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import QScrollArea, QSplitter, QVBoxLayout, QWidget
 
+from .. import LOG_DIR
 from ..widgets.output_panel import OutputPanel
 from ..widgets.progress_panel import ProgressPanel
 from ..workers import Worker
@@ -200,14 +200,25 @@ class BaseOperationTab(QWidget):
         if self._is_running:
             self._restore_idle_state()
 
+    def _graceful_shutdown(self) -> None:
+        """
+        Выполняет мягкое завершение активной задачи при закрытии вкладки.
+
+        Отменяет текущий worker и ожидает завершения пула потоков
+        с таймаутом 3 секунды, чтобы не блокировать закрытие приложения.
+        """
+        if self._current_worker is not None and self._is_running:
+            self._current_worker.cancel()
+
+        self.threadpool.waitForDone(3000)
+
     def _on_error(self, error_msg: str) -> None:
         """
         Обрабатывает ошибку фоновой задачи.
 
-        Ошибки валидации входных данных (ValueError, FileNotFoundError,
-        PermissionError, OSError) отображаются пользователю как понятное
-        сообщение. Внутренние ошибки программы логируются в файл,
-        пользователю показывается краткое уведомление.
+        Ошибки валидации входных данных отображаются пользователю напрямую.
+        Внутренние ошибки логируются в файл, пользователю показывается
+        краткое уведомление.
 
         Args:
             error_msg: Полный traceback от worker'а.
@@ -233,16 +244,14 @@ class BaseOperationTab(QWidget):
         """
         Извлекает понятное пользователю сообщение из traceback.
 
-        Распознает типы исключений, вызванных некорректным вводом:
-        ValueError, FileNotFoundError, PermissionError, OSError.
-        Возвращает последнюю строку с сообщением об ошибке.
+        Распознает ValueError, FileNotFoundError, PermissionError, OSError
+        как пользовательские ошибки.
 
         Args:
             traceback_text: Полный traceback.
 
         Returns:
-            Понятное пользователю сообщение или пустая строка,
-            если ошибка не является пользовательской.
+            Сообщение об ошибке или пустая строка для внутренних ошибок.
         """
         user_exceptions = (
             "ValueError:",

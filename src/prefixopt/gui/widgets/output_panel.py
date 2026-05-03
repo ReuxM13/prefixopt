@@ -1,5 +1,8 @@
 """
-Панель вывода результата с поддержкой plain text и HTML.
+Панель вывода результата с поддержкой plain text, HTML и пейджинации.
+
+При превышении порога отображаемых строк показывается предупреждение.
+Полный результат доступен через кнопку Save.
 """
 
 import re
@@ -21,6 +24,8 @@ from PySide6.QtWidgets import (
 
 from .detachable_manager import DetachableWidgetManager
 
+_PAGE_SIZE = 10_000
+
 
 def strip_rich_tags(text: str) -> str:
     """
@@ -36,7 +41,7 @@ def strip_rich_tags(text: str) -> str:
 
 
 class OutputPanel(QWidget):
-    """Панель вывода с действиями сохранения, копирования, очистки и отделения."""
+    """Панель вывода с пейджинацией, сохранением, копированием и отделением."""
 
     def __init__(
         self,
@@ -52,6 +57,7 @@ class OutputPanel(QWidget):
         """
         super().__init__(parent)
         self._title = title
+        self._full_text: str = ""
         self._detach_btn: Optional[QPushButton] = None
         self._detach_manager: Optional[DetachableWidgetManager] = None
         self._init_ui()
@@ -87,7 +93,6 @@ class OutputPanel(QWidget):
 
         self.output_edit = QTextEdit()
         self.output_edit.setReadOnly(True)
-        self.output_edit.textChanged.connect(self._update_line_count)
 
         group_layout.addLayout(toolbar)
         group_layout.addWidget(self.output_edit)
@@ -98,12 +103,32 @@ class OutputPanel(QWidget):
 
     def set_text(self, text: str) -> None:
         """
-        Устанавливает plain text в область вывода.
+        Устанавливает plain text с применением пейджинации.
+
+        Первые _PAGE_SIZE строк отображаются сразу. При превышении
+        порога добавляется уведомление. Полный текст сохраняется
+        для операции Save.
 
         Args:
             text: Текст для отображения.
         """
-        self.output_edit.setPlainText(strip_rich_tags(text))
+        clean = strip_rich_tags(text)
+        self._full_text = clean
+
+        lines = clean.splitlines()
+        total = len(lines)
+
+        if total > _PAGE_SIZE:
+            preview = "\n".join(lines[:_PAGE_SIZE])
+            notice = (
+                f"\n\n--- Showing {_PAGE_SIZE:,} of {total:,} lines. "
+                f'Use "Save..." to export the full result. ---'
+            )
+            self.output_edit.setPlainText(preview + notice)
+        else:
+            self.output_edit.setPlainText(clean)
+
+        self._update_line_count(total)
 
     def set_html(self, html: str) -> None:
         """
@@ -112,7 +137,9 @@ class OutputPanel(QWidget):
         Args:
             html: HTML-текст для отображения.
         """
+        self._full_text = self.output_edit.toPlainText()
         self.output_edit.setHtml(html)
+        self._update_line_count()
 
     def append_text(self, text: str) -> None:
         """
@@ -121,44 +148,48 @@ class OutputPanel(QWidget):
         Args:
             text: Текст для добавления.
         """
-        clean_text = strip_rich_tags(text)
-        current = self.output_edit.toPlainText()
+        clean = strip_rich_tags(text)
+        current = self._full_text
 
-        if current:
-            self.output_edit.setPlainText(f"{current}\n{clean_text}")
-            return
-
-        self.output_edit.setPlainText(clean_text)
+        combined = f"{current}\n{clean}" if current else clean
+        self.set_text(combined)
 
     def get_text(self) -> str:
         """
-        Возвращает текущее содержимое как plain text.
+        Возвращает полное содержимое как plain text.
 
         Returns:
-            Текст из области вывода.
+            Полный текст без ограничений пейджинации.
         """
-        return self.output_edit.toPlainText()
+        return self._full_text
 
     def clear(self) -> None:
-        """Очищает область вывода."""
+        """Очищает область вывода и внутренний буфер."""
+        self._full_text = ""
         self.output_edit.clear()
+        self._update_line_count(0)
 
-    def _update_line_count(self) -> None:
-        """Обновляет счетчик строк."""
-        text = self.output_edit.toPlainText()
-        if not text:
-            self.line_count_label.setText("Lines: 0")
-            return
-        self.line_count_label.setText(f"Lines: {len(text.splitlines())}")
+    def _update_line_count(self, total: Optional[int] = None) -> None:
+        """
+        Обновляет счетчик строк.
+
+        Args:
+            total: Общее количество строк полного текста.
+                   Если None, подсчитывается из текущего содержимого.
+        """
+        if total is None:
+            text = self._full_text
+            total = len(text.splitlines()) if text else 0
+
+        self.line_count_label.setText(f"Lines: {total:,}")
 
     def _copy_to_clipboard(self) -> None:
-        """Копирует содержимое в буфер обмена как plain text."""
-        QApplication.clipboard().setText(self.output_edit.toPlainText())
+        """Копирует полный текст в буфер обмена."""
+        QApplication.clipboard().setText(self._full_text)
 
     def _save_to_file(self) -> None:
-        """Сохраняет содержимое в файл."""
-        text = self.output_edit.toPlainText()
-        if not text:
+        """Сохраняет полный текст в файл."""
+        if not self._full_text:
             QMessageBox.information(
                 self,
                 "Nothing to save",
@@ -170,4 +201,4 @@ class OutputPanel(QWidget):
         if not file_name:
             return
 
-        Path(file_name).write_text(text, encoding="utf-8")
+        Path(file_name).write_text(self._full_text, encoding="utf-8")

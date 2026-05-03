@@ -9,7 +9,6 @@
 import ipaddress
 from pathlib import Path
 from typing import (
-    Any,
     Dict,
     Iterable,
     Iterator,
@@ -19,7 +18,7 @@ from typing import (
     Union,
 )
 
-from ..core.ip_counter import count_unique_ips, get_prefix_statistics
+from ..core.ip_counter import count_unique_ips, get_duplicate_prefixes, get_prefix_statistics
 from ..core.ip_utils import IPNet, is_subnet_of, normalize_prefix
 from ..core.operations.diff import calculate_diff
 from ..core.operations.sorter import sort_networks
@@ -31,7 +30,6 @@ from ..data.file_reader import (
     read_networks,
     read_prefixes_with_comments,
 )
-
 from .models import (
     CheckResult,
     DiffReport,
@@ -817,8 +815,6 @@ def run_stats(source: InputSource, strict: bool = False) -> StatsResult:
     ipv4_count = len([p for p in data if p.version == 4])
     ipv6_count = len([p for p in data if p.version == 6])
 
-    from prefixopt.core.ip_counter import get_duplicate_prefixes
-
     duplicates = get_duplicate_prefixes(data)
 
     return StatsResult(
@@ -893,7 +889,6 @@ def run_multi_intersect(
 
     Загружает и оптимизирует все источники, строит матрицу присутствия,
     вычисляет попарные точные совпадения и частичные перекрытия.
-    Весь расчёт выполняется в фоновом потоке.
 
     Args:
         *sources: Два и более источника данных.

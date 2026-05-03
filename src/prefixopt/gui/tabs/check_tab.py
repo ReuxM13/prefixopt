@@ -2,17 +2,18 @@
 Вкладка проверки вхождения адреса или подсети в список.
 """
 
+import logging
+from pathlib import Path
 from typing import Any
 
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
 )
 
-import logging
-from pathlib import Path
-
+from .. import LOG_DIR
 from .base_operation_tab import BaseOperationTab
 from ..models import CheckResult
 from ..services import run_check
@@ -20,9 +21,9 @@ from ..widgets.input_panel import InputPanel
 from ..widgets.prefix_input_widget import PrefixInputWidget
 from ..widgets.split_output_panel import SplitOutputPanel
 from ..workers import Worker
-from .. import LOG_DIR
 
 logger = logging.getLogger("prefixopt.gui.tab.check")
+
 
 class CheckTab(BaseOperationTab):
     """Вкладка проверки вхождения адреса в список."""
@@ -74,6 +75,97 @@ class CheckTab(BaseOperationTab):
 
         self._update_state()
 
+    def _is_dark_theme(self) -> bool:
+        """
+        Определяет активную тему по яркости фона палитры.
+
+        Returns:
+            True для тёмной темы.
+        """
+        bg = self.palette().color(QPalette.ColorRole.Window)
+        luminance = (
+            0.299 * bg.redF()
+            + 0.587 * bg.greenF()
+            + 0.114 * bg.blueF()
+        )
+        return luminance < 0.5
+
+    def _build_found_html(self, result: CheckResult) -> str:
+        """
+        Формирует HTML-отчёт для успешного результата поиска.
+
+        Args:
+            result: Результат проверки.
+
+        Returns:
+            HTML-строка отчёта.
+        """
+        dark = self._is_dark_theme()
+
+        if dark:
+            color_found = "#4ec9b0"
+            color_net = "#569cd6"
+            color_bg = "#1e1e1e"
+            color_text = "#d4d4d4"
+        else:
+            color_found = "#107c10"
+            color_net = "#0078d4"
+            color_bg = "#ffffff"
+            color_text = "#1e1e1e"
+
+        parts = [
+            f'<html><body style="font-family: Consolas, monospace; '
+            f'font-size: 10pt; color: {color_text}; '
+            f'background-color: {color_bg}; margin: 6px;">'
+        ]
+
+        parts.append(
+            f'<p style="font-size: 11pt; color: {color_found}; '
+            f'font-weight: bold;">'
+            f"✔ '{result.target}' is contained in the source list</p>"
+        )
+        parts.append(
+            f"<p>Found in "
+            f'<b style="color: {color_found};">'
+            f"{len(result.containing_networks)}</b> network(s):</p>"
+        )
+
+        parts.append("<ul style='margin: 4px 0;'>")
+        for net in result.containing_networks:
+            parts.append(
+                f'<li style="color: {color_net};">{net}</li>'
+            )
+        parts.append("</ul>")
+
+        parts.append("</body></html>")
+        return "".join(parts)
+
+    def _build_not_found_html(self, result: CheckResult) -> str:
+        """
+        Формирует HTML-отчёт для отрицательного результата поиска.
+
+        Args:
+            result: Результат проверки.
+
+        Returns:
+            HTML-строка отчёта.
+        """
+        dark = self._is_dark_theme()
+        color_not = "#f44747" if dark else "#cb2431"
+        color_bg = "#1e1e1e" if dark else "#ffffff"
+        color_text = "#d4d4d4" if dark else "#1e1e1e"
+
+        return (
+            f'<html><body style="font-family: Consolas, monospace; '
+            f'font-size: 10pt; color: {color_text}; '
+            f'background-color: {color_bg}; margin: 6px;">'
+            f'<p style="font-size: 11pt; color: {color_not}; '
+            f'font-weight: bold;">'
+            f"✘ '{result.target}' is NOT contained in any network "
+            f"from the source.</p>"
+            f"</body></html>"
+        )
+
     def _update_state(self, _: Any = None) -> None:
         """Обновляет доступность кнопки запуска."""
         self.run_button.setEnabled(
@@ -91,8 +183,7 @@ class CheckTab(BaseOperationTab):
         worker = Worker(run_check, target, source)
         worker.signals.result.connect(self._on_check_result)
         worker.signals.error.connect(self._on_error)
-        # worker.signals.finished.connect(self._on_finished)
-        self._start_worker(worker, "...")
+        self._start_worker(worker, "Checking...")
 
     def _on_check_result(self, result: CheckResult) -> None:
         """
@@ -104,21 +195,16 @@ class CheckTab(BaseOperationTab):
         self._expand_output()
 
         if result.found:
-            report_lines = [
-                f"✓ '{result.target}' is contained in the "
-                f"following networks:"
-            ]
-            for net in result.containing_networks:
-                report_lines.append(f"  {net}")
-            self.split_output.set_report_text("\n".join(report_lines))
+            self.split_output.set_report_html(
+                self._build_found_html(result)
+            )
             self.split_output.set_output_text(result.formatted_text)
             self.progress_panel.set_status(
                 f"Found in {len(result.containing_networks)} network(s)"
             )
         else:
-            self.split_output.set_report_text(
-                f"✗ '{result.target}' is NOT contained in any "
-                f"network from the source."
+            self.split_output.set_report_html(
+                self._build_not_found_html(result)
             )
             self.split_output.set_output_text("")
             self.progress_panel.set_status("Not found")
@@ -146,7 +232,6 @@ class CheckTab(BaseOperationTab):
 
         self.split_output.set_output_text("")
         self.progress_panel.set_status("Error")
-
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""

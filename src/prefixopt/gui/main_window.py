@@ -7,10 +7,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut, QShowEvent
+from PySide6.QtCore import QEvent, QTimer, QUrl, Qt
+from PySide6.QtGui import QCloseEvent, QKeyEvent, QKeySequence, QShortcut, QShowEvent
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget
 
 from .settings_manager import SettingsManager
@@ -24,14 +26,16 @@ from .tabs.optimize_tab import OptimizeTab
 from .tabs.split_tab import SplitTab
 from .tabs.stats_tab import StatsTab
 
+_EASTER_EGG_WORD = "sraka"
+_EASTER_EGG_BG = "#5C4033"
+_EASTER_EGG_DURATION_MS = 30000
+
 
 class MainWindow(QMainWindow):
     """Главное окно приложения."""
 
     def __init__(self) -> None:
-        """
-        Инициализирует окно приложения.
-        """
+        """Инициализирует окно приложения."""
         super().__init__()
         self.setWindowTitle("prefixopt")
         self.setMinimumSize(640, 480)
@@ -40,15 +44,42 @@ class MainWindow(QMainWindow):
         self._tab_widgets: dict[str, QWidget] = {}
         self._splitters_restored = False
 
+        self._key_buffer: list[str] = []
+        self._saved_stylesheet: str = ""
+        self._easter_active = False
+
+        self._media_player: Optional[QMediaPlayer] = None
+        self._audio_output: Optional[QAudioOutput] = None
+
         self._setup_default_geometry()
         self._init_ui()
         self._setup_shortcuts()
         self._restore_saved_state()
 
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """
+        Перехватывает нажатия клавиш.
+
+        Args:
+            event: Событие нажатия клавиши.
+        """
+        if not event.isAutoRepeat():
+            text = event.text().lower()
+            if text and text.isalpha():
+                self._key_buffer.append(text)
+                buffer_len = len(_EASTER_EGG_WORD)
+
+                if len(self._key_buffer) > buffer_len:
+                    self._key_buffer = self._key_buffer[-buffer_len:]
+
+                if "".join(self._key_buffer) == _EASTER_EGG_WORD:
+                    self._key_buffer.clear()
+                    self._trigger_easter_egg()
+
+        super().keyPressEvent(event)
+
     def _setup_default_geometry(self) -> None:
-        """
-        Устанавливает размеры окна по умолчанию.
-        """
+        """Устанавливает размеры окна по умолчанию."""
         screen = QApplication.primaryScreen()
         if screen is None:
             self.resize(1350, 900)
@@ -60,9 +91,7 @@ class MainWindow(QMainWindow):
         self.resize(width, height)
 
     def _init_ui(self) -> None:
-        """
-        Создает вкладки и регистрирует их в менеджере настроек.
-        """
+        """Создает вкладки и регистрирует их в менеджере настроек."""
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
 
@@ -86,9 +115,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
     def _setup_shortcuts(self) -> None:
-        """
-        Настраивает глобальные горячие клавиши окна.
-        """
+        """Настраивает глобальные горячие клавиши окна."""
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(
             lambda: self._dispatch_tab_action("browse")
         )
@@ -104,9 +131,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self.close)
 
     def _restore_saved_state(self) -> None:
-        """
-        Восстанавливает состояние окна и настроек вкладок.
-        """
+        """Восстанавливает состояние окна и настроек вкладок."""
         geometry = self._settings.load_main_window_geometry()
         if geometry is not None:
             self.restoreGeometry(geometry)
@@ -121,9 +146,7 @@ class MainWindow(QMainWindow):
             self.setWindowState(self.windowState() | Qt.WindowMaximized)
 
     def _save_state(self) -> None:
-        """
-        Сохраняет состояние окна, вкладок и сплиттеров.
-        """
+        """Сохраняет состояние окна, вкладок и сплиттеров."""
         self._settings.save_main_window(
             geometry=self.saveGeometry(),
             maximized=self.isMaximized(),
@@ -133,9 +156,7 @@ class MainWindow(QMainWindow):
         self._settings.save_all()
 
     def _save_splitters(self) -> None:
-        """
-        Сохраняет размеры сплиттеров всех вкладок.
-        """
+        """Сохраняет размеры сплиттеров всех вкладок."""
         for key, tab in self._tab_widgets.items():
             main_splitter = getattr(tab, "splitter", None)
             if main_splitter is not None:
@@ -154,9 +175,7 @@ class MainWindow(QMainWindow):
                     )
 
     def _restore_splitters(self) -> None:
-        """
-        Восстанавливает размеры сплиттеров всех вкладок.
-        """
+        """Восстанавливает размеры сплиттеров всех вкладок."""
         for key, tab in self._tab_widgets.items():
             main_splitter = getattr(tab, "splitter", None)
             if main_splitter is not None:
@@ -194,7 +213,9 @@ class MainWindow(QMainWindow):
             Панель вывода или None.
         """
         split_output = getattr(tab, "split_output", None)
-        if split_output is not None and hasattr(split_output, "get_output_panel"):
+        if split_output is not None and hasattr(
+            split_output, "get_output_panel"
+        ):
             return split_output.get_output_panel()
 
         return getattr(tab, "output_panel", None)
@@ -235,6 +256,84 @@ class MainWindow(QMainWindow):
             if copy_button is not None and copy_button.isEnabled():
                 copy_button.click()
 
+    def eventFilter(self, obj: object, event: QEvent) -> bool:
+        """
+        Перехватывает события клавиатуры.
+
+        Args:
+            obj: Объект-источник события.
+            event: Событие.
+
+        Returns:
+            False для продолжения обработки события.
+        """
+        if event.type() == QEvent.Type.KeyPress:
+            key_event: QKeyEvent = event
+
+            if key_event.isAutoRepeat():
+                return False
+
+            # Обрабатываем только события от самого приложения,
+            # игнорируя дубли от дочерних виджетов
+            if obj is not QApplication.instance():
+                return False
+
+            text = key_event.text().lower()
+
+            if text and text.isalpha():
+                self._key_buffer.append(text)
+                buffer_len = len(_EASTER_EGG_WORD)
+
+                if len(self._key_buffer) > buffer_len:
+                    self._key_buffer = self._key_buffer[-buffer_len:]
+
+                if "".join(self._key_buffer) == _EASTER_EGG_WORD:
+                    self._key_buffer.clear()
+                    self._trigger_easter_egg()
+
+        return False
+
+    def _trigger_easter_egg(self) -> None:
+        """Активирует пасхалку: меняет фон и воспроизводит звук."""
+        if self._easter_active:
+            return
+
+        self._easter_active = True
+
+        app = QApplication.instance()
+        self._saved_stylesheet = app.styleSheet()
+
+        app.setStyleSheet(
+            self._saved_stylesheet
+            + f"\n* {{ background-color: {_EASTER_EGG_BG} !important; }}"
+        )
+
+        self._play_sound()
+
+        QTimer.singleShot(
+            _EASTER_EGG_DURATION_MS, self._deactivate_easter_egg
+        )
+
+    def _deactivate_easter_egg(self) -> None:
+        """Восстанавливает нормальное состояние интерфейса."""
+        app = QApplication.instance()
+        app.setStyleSheet(self._saved_stylesheet)
+        self._easter_active = False
+
+    def _play_sound(self) -> None:
+        """Воспроизводит звуковой файл пасхалки."""
+        sound_path = Path(__file__).parent / "m.mp3"
+        if not sound_path.exists():
+            return
+
+        self._audio_output = QAudioOutput()
+        self._audio_output.setVolume(1.0)
+
+        self._media_player = QMediaPlayer()
+        self._media_player.setAudioOutput(self._audio_output)
+        self._media_player.setSource(QUrl.fromLocalFile(str(sound_path)))
+        self._media_player.play()
+
     def showEvent(self, event: QShowEvent) -> None:
         """
         Восстанавливает размеры сплиттеров после первого показа окна.
@@ -257,5 +356,9 @@ class MainWindow(QMainWindow):
         Args:
             event: Событие закрытия окна.
         """
+        for widget in self._tab_widgets.values():
+            if hasattr(widget, "_graceful_shutdown"):
+                widget._graceful_shutdown()
+
         self._save_state()
         super().closeEvent(event)
