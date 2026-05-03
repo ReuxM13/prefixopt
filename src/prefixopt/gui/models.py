@@ -66,6 +66,25 @@ class IntersectReport:
 
 
 @dataclass
+class PairwiseExact:
+    """Попарные точные совпадения между двумя источниками."""
+
+    name_a: str = ""
+    name_b: str = ""
+    prefixes: List[IPNet] = field(default_factory=list)
+
+
+@dataclass
+class PairwisePartial:
+    """Попарные частичные перекрытия между двумя источниками."""
+
+    subnet: IPNet = field(default_factory=lambda: None)
+    supernet: IPNet = field(default_factory=lambda: None)
+    source_subnet: str = ""
+    source_supernet: str = ""
+
+
+@dataclass
 class MultiIntersectReport:
     """Результат мульти-пересечения (3+ источников)."""
 
@@ -75,6 +94,11 @@ class MultiIntersectReport:
     intersection_volume: int = 0
     source_names: List[str] = field(default_factory=list)
     source_count: int = 0
+    filtered_prefixes: List[IPNet] = field(default_factory=list)
+    pairwise_exact: List[PairwiseExact] = field(default_factory=list)
+    pairwise_partial: List[PairwisePartial] = field(default_factory=list)
+    output_prefixes: List[IPNet] = field(default_factory=list)
+    filtered_unique_ips: int = 0
 
 
 @dataclass

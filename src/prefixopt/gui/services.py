@@ -31,6 +31,7 @@ from ..data.file_reader import (
     read_networks,
     read_prefixes_with_comments,
 )
+
 from .models import (
     CheckResult,
     DiffReport,
@@ -40,6 +41,8 @@ from .models import (
     MergeResult,
     MultiIntersectReport,
     OptimizeResult,
+    PairwiseExact,
+    PairwisePartial,
     SplitResult,
     StatsResult,
 )
@@ -886,7 +889,11 @@ def run_multi_intersect(
     source_names: Optional[List[str]] = None,
 ) -> MultiIntersectReport:
     """
-    Находит карту присутствия префиксов по нескольким источникам.
+    Находит карту присутствия префиксов и выполняет полный pairwise-анализ.
+
+    Загружает и оптимизирует все источники, строит матрицу присутствия,
+    вычисляет попарные точные совпадения и частичные перекрытия.
+    Весь расчёт выполняется в фоновом потоке.
 
     Args:
         *sources: Два и более источника данных.
@@ -894,13 +901,14 @@ def run_multi_intersect(
         source_names: Имена источников для отчета.
 
     Returns:
-        MultiIntersectReport с картой присутствия и статистикой.
+        MultiIntersectReport с полными данными для рендеринга.
     """
     if len(sources) < 2:
         raise ValueError("Multi-intersect requires at least 2 sources")
 
-    lists = []
-    volumes = []
+    lists: List[List[IPNet]] = []
+    volumes: List[int] = []
+
     for source in sources:
         raw = _load_networks(source, strict=strict)
         optimized = list(
@@ -922,6 +930,7 @@ def run_multi_intersect(
             freq[key] = freq.get(key, 0) + 1
 
     sets = [set(lst) for lst in lists]
+
     presence_map: Dict[str, List[int]] = {}
     for key in freq:
         presence_map[key] = [
@@ -937,6 +946,77 @@ def run_multi_intersect(
         count_unique_ips(all_prefixes) if all_prefixes else 0
     )
 
+    filtered = [
+        net for net in all_prefixes
+        if len(presence_map.get(str(net), [])) >= 2
+    ]
+
+    filtered_unique_ips = count_unique_ips(filtered) if filtered else 0
+
+    pairwise_exact: List[PairwiseExact] = []
+    for i in range(num_sources):
+        for j in range(i + 1, num_sources):
+            exact = sort_networks(list(sets[i] & sets[j]))
+            if exact:
+                pairwise_exact.append(
+                    PairwiseExact(
+                        name_a=source_names[i],
+                        name_b=source_names[j],
+                        prefixes=exact,
+                    )
+                )
+
+    sorted_lists = [sort_networks(lst) for lst in lists]
+    pairwise_partial: List[PairwisePartial] = []
+
+    for i in range(num_sources):
+        for j in range(i + 1, num_sources):
+            raw_overlaps = _find_two_list_overlaps(
+                sorted_lists[i], sorted_lists[j]
+            )
+            for net1, net2 in raw_overlaps:
+                if net1 == net2:
+                    continue
+                if net1.subnet_of(net2):
+                    pairwise_partial.append(
+                        PairwisePartial(
+                            subnet=net1,
+                            supernet=net2,
+                            source_subnet=source_names[i],
+                            source_supernet=source_names[j],
+                        )
+                    )
+                elif net2.subnet_of(net1):
+                    pairwise_partial.append(
+                        PairwisePartial(
+                            subnet=net2,
+                            supernet=net1,
+                            source_subnet=source_names[j],
+                            source_supernet=source_names[i],
+                        )
+                    )
+                else:
+                    pairwise_partial.append(
+                        PairwisePartial(
+                            subnet=net1,
+                            supernet=net2,
+                            source_subnet=source_names[i],
+                            source_supernet=source_names[j],
+                        )
+                    )
+
+    pairwise_partial.sort(
+        key=lambda x: (x.subnet.version, int(x.subnet.network_address))
+    )
+
+    out_set: set[IPNet] = set(filtered)
+    for pe in pairwise_exact:
+        out_set.update(pe.prefixes)
+    for pp in pairwise_partial:
+        out_set.update([pp.subnet, pp.supernet])
+
+    output_prefixes = sort_networks(list(out_set))
+
     return MultiIntersectReport(
         common_prefixes=all_prefixes,
         presence_map=presence_map,
@@ -944,4 +1024,9 @@ def run_multi_intersect(
         intersection_volume=intersection_volume,
         source_names=source_names,
         source_count=num_sources,
+        filtered_prefixes=filtered,
+        pairwise_exact=pairwise_exact,
+        pairwise_partial=pairwise_partial,
+        output_prefixes=output_prefixes,
+        filtered_unique_ips=filtered_unique_ips,
     )

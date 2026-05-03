@@ -7,7 +7,6 @@
 - 3+ источников — матрица присутствия с попарным анализом.
 """
 
-from pathlib import Path
 from typing import Any, List, Tuple
 
 from PySide6.QtWidgets import (
@@ -28,11 +27,7 @@ from ..widgets.input_panel import InputPanel
 from ..widgets.split_output_panel import SplitOutputPanel
 from ..workers import Worker
 
-from prefixopt.core.ip_counter import count_unique_ips
 from prefixopt.core.ip_utils import IPNet
-from prefixopt.core.operations.sorter import sort_networks
-from prefixopt.core.pipeline import process_prefixes
-from prefixopt.data.file_reader import read_networks, extract_prefixes_from_text
 
 
 _REPORT_CSS = """
@@ -79,7 +74,6 @@ _REPORT_CSS = """
     .no { color: #666; }
     .exact { color: #569cd6; }
     .partial { color: #ce9178; }
-    .info { color: #b5cea8; }
     .warn { color: #d7ba7d; }
     .stat-value { color: #b5cea8; font-weight: bold; }
     .muted { color: #808080; }
@@ -88,61 +82,9 @@ _REPORT_CSS = """
 """
 
 
-def _find_overlaps_linear(
-    list1: List[IPNet],
-    list2: List[IPNet],
-) -> List[Tuple[IPNet, IPNet]]:
+def _fmt_count(count: int) -> str:
     """
-    Линейный поиск пересечений между двумя отсортированными списками.
-
-    Использует two-pointer алгоритм по диапазонам адресов.
-
-    Args:
-        list1: Первый отсортированный список сетей.
-        list2: Второй отсортированный список сетей.
-
-    Returns:
-        Список пар пересекающихся сетей.
-    """
-    overlaps: List[Tuple[IPNet, IPNet]] = []
-    i, j = 0, 0
-    len1, len2 = len(list1), len(list2)
-
-    while i < len1 and j < len2:
-        net1, net2 = list1[i], list2[j]
-
-        if net1.version < net2.version:
-            i += 1
-            continue
-        if net1.version > net2.version:
-            j += 1
-            continue
-
-        start1 = int(net1.network_address)
-        end1 = int(net1.broadcast_address)
-        start2 = int(net2.network_address)
-        end2 = int(net2.broadcast_address)
-
-        if max(start1, start2) <= min(end1, end2):
-            overlaps.append((net1, net2))
-            if end1 < end2:
-                i += 1
-            elif end2 < end1:
-                j += 1
-            else:
-                i += 1
-                j += 1
-        elif end1 < start2:
-            i += 1
-        else:
-            j += 1
-
-    return overlaps
-
-
-def _format_ip_count(count: int) -> str:
-    """
-    Форматирует числовое значение с разделителями разрядов.
+    Форматирует число с разделителями разрядов.
 
     Args:
         count: Число для форматирования.
@@ -197,6 +139,7 @@ class IntersectTab(BaseOperationTab):
 
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Intersect")
+        self.run_button.setProperty("primary", True)
         run_row.addStretch()
         run_row.addWidget(self.run_button)
         self.control_layout.addLayout(run_row)
@@ -249,7 +192,7 @@ class IntersectTab(BaseOperationTab):
 
     def _on_panel_source_changed(self, panel: InputPanel) -> None:
         """
-        Обработчик изменения источника в панели.
+        Обрабатывает изменение источника в панели.
 
         Args:
             panel: Панель, в которой изменился источник.
@@ -345,11 +288,10 @@ class IntersectTab(BaseOperationTab):
             HTML-строка отчета.
         """
         parts = [_REPORT_CSS]
-
         parts.append(f"<h2>Self-Intersection Report: {report.name1}</h2>")
         parts.append(
             f'<p>Unique IPs: <span class="stat-value">'
-            f"{_format_ip_count(report.volume1)}</span></p>"
+            f"{_fmt_count(report.volume1)}</span></p>"
         )
         parts.append(
             '<p class="muted">Exact matches are not calculated '
@@ -360,11 +302,12 @@ class IntersectTab(BaseOperationTab):
             parts.append(
                 f"<h3>Partial Overlaps ({len(report.partial_overlaps)})</h3>"
             )
-            parts.append("<table><tr>")
-            parts.append("<th>Subnet</th><th>Source</th>")
-            parts.append("<th>Supernet</th><th>Source</th>")
-            parts.append("</tr>")
-
+            parts.append(
+                "<table><tr>"
+                "<th>Subnet</th><th>Source</th>"
+                "<th>Supernet</th><th>Source</th>"
+                "</tr>"
+            )
             for sub, parent, src_sub, src_parent in report.partial_overlaps:
                 parts.append(
                     f"<tr>"
@@ -374,7 +317,9 @@ class IntersectTab(BaseOperationTab):
                 )
             parts.append("</table>")
         else:
-            parts.append('<p class="info">No internal overlaps found.</p>')
+            parts.append(
+                '<p class="muted">No internal overlaps found.</p>'
+            )
 
         return "".join(parts)
 
@@ -389,33 +334,28 @@ class IntersectTab(BaseOperationTab):
             HTML-строка отчета.
         """
         parts = [_REPORT_CSS]
-
         parts.append("<h2>Intersection Report</h2>")
 
-        parts.append("<table><tr>")
-        parts.append("<th>Metric</th>")
-        parts.append(f"<th>{report.name1}</th>")
-        parts.append(f"<th>{report.name2}</th>")
-        parts.append("<th>Intersection</th>")
-        parts.append("</tr>")
-
         parts.append(
-            f"<tr>"
-            f"<td>Unique IPs</td>"
-            f'<td class="stat-value">{_format_ip_count(report.volume1)}</td>'
-            f'<td class="stat-value">{_format_ip_count(report.volume2)}</td>'
-            f'<td class="stat-value">'
-            f"{_format_ip_count(report.volume_intersection)}</td>"
-            f"</tr>"
+            "<table><tr>"
+            "<th>Metric</th>"
+            f"<th>{report.name1}</th>"
+            f"<th>{report.name2}</th>"
+            "<th>Intersection</th>"
+            "</tr>"
         )
-
         parts.append(
-            f"<tr>"
-            f"<td>Coverage</td>"
+            f"<tr><td>Unique IPs</td>"
+            f'<td class="stat-value">{_fmt_count(report.volume1)}</td>'
+            f'<td class="stat-value">{_fmt_count(report.volume2)}</td>'
+            f'<td class="stat-value">'
+            f"{_fmt_count(report.volume_intersection)}</td></tr>"
+        )
+        parts.append(
+            f"<tr><td>Coverage</td>"
             f'<td class="stat-value">{report.coverage1:.2f}%</td>'
             f'<td class="stat-value">{report.coverage2:.2f}%</td>'
-            f"<td></td>"
-            f"</tr>"
+            f"<td></td></tr>"
         )
         parts.append("</table>")
 
@@ -451,10 +391,12 @@ class IntersectTab(BaseOperationTab):
             parts.append(
                 f"<h3>Partial Overlaps ({len(report.partial_overlaps)})</h3>"
             )
-            parts.append("<table><tr>")
-            parts.append("<th>Subnet</th><th>Source</th>")
-            parts.append("<th>Supernet</th><th>Source</th>")
-            parts.append("</tr>")
+            parts.append(
+                "<table><tr>"
+                "<th>Subnet</th><th>Source</th>"
+                "<th>Supernet</th><th>Source</th>"
+                "</tr>"
+            )
             for sub, parent, src_sub, src_parent in report.partial_overlaps:
                 parts.append(
                     f"<tr>"
@@ -465,6 +407,102 @@ class IntersectTab(BaseOperationTab):
             parts.append("</table>")
         else:
             parts.append('<p class="muted">No partial overlaps found.</p>')
+
+        return "".join(parts)
+
+    def _build_multi_html(self, report: MultiIntersectReport) -> str:
+        """
+        Формирует HTML-отчет для режима 3+ источников.
+
+        Использует предрасчитанные данные из report без повторной
+        загрузки источников.
+
+        Args:
+            report: Результат мульти-пересечения.
+
+        Returns:
+            HTML-строка отчета.
+        """
+        parts = [_REPORT_CSS]
+        parts.append("<h2>Multi-Intersection Report</h2>")
+        parts.append(
+            f'<p>Sources: <span class="stat-value">'
+            f"{', '.join(report.source_names)}</span></p>"
+        )
+        parts.append("<p>Threshold: present in ≥2 sources</p>")
+        parts.append(
+            f'<p>Matched prefixes: <span class="stat-value">'
+            f"{len(report.filtered_prefixes)}</span></p>"
+        )
+
+        if report.filtered_prefixes:
+            parts.append(
+                f'<p>Total unique IPs: <span class="stat-value">'
+                f"{_fmt_count(report.filtered_unique_ips)}</span></p>"
+            )
+            parts.append("<h3>Presence Matrix</h3>")
+            parts.append("<table><tr><th>Prefix</th>")
+            for name in report.source_names:
+                parts.append(f"<th>{name}</th>")
+            parts.append("</tr>")
+
+            for net in report.filtered_prefixes:
+                str_net = str(net)
+                indices = report.presence_map.get(str_net, [])
+                parts.append(f"<tr><td>{str_net}</td>")
+                for idx in range(report.source_count):
+                    if idx in indices:
+                        parts.append('<td class="yes">✔</td>')
+                    else:
+                        parts.append('<td class="no">—</td>')
+                parts.append("</tr>")
+            parts.append("</table>")
+        else:
+            parts.append(
+                '<p class="muted">No prefixes appear in ≥2 sources.</p>'
+            )
+
+        parts.append("<h3>Pairwise Exact Matches</h3>")
+
+        if report.pairwise_exact:
+            for pe in report.pairwise_exact:
+                parts.append(
+                    f"<p>{pe.name_a} ∩ {pe.name_b}: "
+                    f'<span class="stat-value">{len(pe.prefixes)}</span></p>'
+                )
+                parts.append("<table><tr><th>Prefix</th></tr>")
+                for net in pe.prefixes:
+                    parts.append(f'<tr><td class="exact">{net}</td></tr>')
+                parts.append("</table>")
+        else:
+            parts.append(
+                '<p class="muted">No exact matches between any pair.</p>'
+            )
+
+        if report.pairwise_partial:
+            parts.append(
+                f"<h3>Partial Overlaps ({len(report.pairwise_partial)})</h3>"
+            )
+            parts.append(
+                "<table><tr>"
+                "<th>Subnet</th><th>Source</th>"
+                "<th>Supernet</th><th>Source</th>"
+                "</tr>"
+            )
+            for pp in report.pairwise_partial:
+                parts.append(
+                    f"<tr>"
+                    f'<td class="partial">{pp.subnet}</td>'
+                    f"<td>{pp.source_subnet}</td>"
+                    f'<td class="partial">{pp.supernet}</td>'
+                    f"<td>{pp.source_supernet}</td>"
+                    f"</tr>"
+                )
+            parts.append("</table>")
+        else:
+            parts.append(
+                '<p class="muted">No partial overlaps between any pair.</p>'
+            )
 
         return "".join(parts)
 
@@ -483,13 +521,11 @@ class IntersectTab(BaseOperationTab):
             html = self._build_two_source_html(report)
 
         self.split_output.set_report_html(html)
-
-        if report.all_results:
-            flat = format_prefixes(report.all_results, "list")
-        else:
-            flat = ""
-        self.split_output.set_output_text(flat)
-
+        self.split_output.set_output_text(
+            format_prefixes(report.all_results, "list")
+            if report.all_results
+            else ""
+        )
         self.progress_panel.set_status(
             f"Done. Exact: {len(report.exact_matches)}, "
             f"Partial: {len(report.partial_overlaps)}"
@@ -499,181 +535,22 @@ class IntersectTab(BaseOperationTab):
         """
         Обрабатывает результат для 3+ источников.
 
+        Рендерит HTML из предрасчитанных данных без повторной загрузки.
+
         Args:
             report: Результат мульти-пересечения.
         """
         self._expand_output()
-
-        filtered = [
-            net for net in report.common_prefixes
-            if len(report.presence_map.get(str(net), [])) >= 2
-        ]
-
-        parts = [_REPORT_CSS]
-        parts.append("<h2>Multi-Intersection Report</h2>")
-        parts.append(
-            f'<p>Sources: <span class="stat-value">'
-            f"{', '.join(report.source_names)}</span></p>"
+        self.split_output.set_report_html(self._build_multi_html(report))
+        self.split_output.set_output_text(
+            format_prefixes(report.output_prefixes, "list")
+            if report.output_prefixes
+            else ""
         )
-        parts.append(
-            f'<p>Threshold: present in ≥2 sources</p>'
-        )
-        parts.append(
-            f'<p>Matched prefixes: <span class="stat-value">'
-            f"{len(filtered)}</span></p>"
-        )
-
-        if filtered:
-            vol = count_unique_ips(filtered)
-            parts.append(
-                f'<p>Total unique IPs: <span class="stat-value">'
-                f"{_format_ip_count(vol)}</span></p>"
-            )
-
-            parts.append("<h3>Presence Matrix</h3>")
-            parts.append("<table><tr><th>Prefix</th>")
-            for name in report.source_names:
-                parts.append(f"<th>{name}</th>")
-            parts.append("</tr>")
-
-            for net in filtered:
-                str_net = str(net)
-                indices = report.presence_map.get(str_net, [])
-                parts.append(f"<tr><td>{str_net}</td>")
-                for idx in range(report.source_count):
-                    if idx in indices:
-                        parts.append('<td class="yes">✔</td>')
-                    else:
-                        parts.append('<td class="no">—</td>')
-                parts.append("</tr>")
-            parts.append("</table>")
-        else:
-            parts.append(
-                '<p class="muted">No prefixes appear in ≥2 sources.</p>'
-            )
-
-        optimized_lists = self._load_optimized_lists()
-        sets = [set(lst) for lst in optimized_lists]
-
-        parts.append("<h3>Pairwise Exact Matches</h3>")
-        has_exact = False
-
-        for i in range(len(optimized_lists)):
-            for j in range(i + 1, len(optimized_lists)):
-                exact = sets[i] & sets[j]
-                if not exact:
-                    continue
-                has_exact = True
-                parts.append(
-                    f"<p>{report.source_names[i]} ∩ "
-                    f"{report.source_names[j]}: "
-                    f'<span class="stat-value">{len(exact)}</span></p>'
-                )
-                parts.append("<table><tr><th>Prefix</th></tr>")
-                for net in sort_networks(list(exact)):
-                    parts.append(f'<tr><td class="exact">{net}</td></tr>')
-                parts.append("</table>")
-
-        if not has_exact:
-            parts.append(
-                '<p class="muted">No exact matches between any pair.</p>'
-            )
-
-        sorted_lists = [sort_networks(lst) for lst in optimized_lists]
-        all_partial: List[Tuple[IPNet, IPNet, str, str]] = []
-
-        for i in range(len(optimized_lists)):
-            for j in range(i + 1, len(optimized_lists)):
-                raw_overlaps = _find_overlaps_linear(
-                    sorted_lists[i], sorted_lists[j]
-                )
-                for net1, net2 in raw_overlaps:
-                    if net1 == net2:
-                        continue
-                    if net1.subnet_of(net2):
-                        all_partial.append(
-                            (net1, net2,
-                             report.source_names[i],
-                             report.source_names[j])
-                        )
-                    elif net2.subnet_of(net1):
-                        all_partial.append(
-                            (net2, net1,
-                             report.source_names[j],
-                             report.source_names[i])
-                        )
-                    else:
-                        all_partial.append(
-                            (net1, net2,
-                             report.source_names[i],
-                             report.source_names[j])
-                        )
-
-        if all_partial:
-            all_partial.sort(
-                key=lambda x: (x[0].version, int(x[0].network_address))
-            )
-            parts.append(
-                f"<h3>Partial Overlaps ({len(all_partial)})</h3>"
-            )
-            parts.append("<table><tr>")
-            parts.append("<th>Subnet</th><th>Source</th>")
-            parts.append("<th>Supernet</th><th>Source</th>")
-            parts.append("</tr>")
-
-            for sub, parent, src_sub, src_parent in all_partial:
-                parts.append(
-                    f"<tr>"
-                    f'<td class="partial">{sub}</td><td>{src_sub}</td>'
-                    f'<td class="partial">{parent}</td><td>{src_parent}</td>'
-                    f"</tr>"
-                )
-            parts.append("</table>")
-        else:
-            parts.append(
-                '<p class="muted">No partial overlaps between any pair.</p>'
-            )
-
-        self.split_output.set_report_html("".join(parts))
-
-        out_set: set[IPNet] = set(filtered)
-        for i in range(len(optimized_lists)):
-            for j in range(i + 1, len(optimized_lists)):
-                out_set.update(sets[i] & sets[j])
-        for sub, parent, _, _ in all_partial:
-            out_set.update([sub, parent])
-
-        if out_set:
-            flat = format_prefixes(sort_networks(list(out_set)), "list")
-        else:
-            flat = ""
-
-        self.split_output.set_output_text(flat)
         self.progress_panel.set_status(
-            f"Done. {len(filtered)} shared prefixes, "
+            f"Done. {len(report.filtered_prefixes)} shared prefixes, "
             f"pairwise analysis complete"
         )
-
-    def _load_optimized_lists(self) -> List[List[IPNet]]:
-        """
-        Загружает и оптимизирует списки из сохраненных источников.
-
-        Returns:
-            Список оптимизированных списков сетей.
-        """
-        result = []
-        for src in self._sources:
-            if isinstance(src, Path):
-                raw = read_networks(src)
-            else:
-                raw = extract_prefixes_from_text(src)
-            opt = list(
-                process_prefixes(
-                    raw, sort=True, remove_nested=True, aggregate=True
-                )
-            )
-            result.append(opt)
-        return result
 
     def _on_error(self, error_msg: str) -> None:
         """
