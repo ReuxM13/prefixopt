@@ -8,6 +8,9 @@
 """
 
 from typing import Any, List, Tuple
+from .. import LOG_DIR
+import logging
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -28,6 +31,8 @@ from ..widgets.split_output_panel import SplitOutputPanel
 from ..workers import Worker
 
 from prefixopt.core.ip_utils import IPNet
+
+logger = logging.getLogger("prefixopt.gui.tab.intersect")
 
 
 _REPORT_CSS = """
@@ -550,12 +555,25 @@ class IntersectTab(BaseOperationTab):
 
     def _on_error(self, error_msg: str) -> None:
         """
-        Отображает сообщение об ошибке.
+        Обрабатывает ошибку фоновой задачи.
 
         Args:
-            error_msg: Текст ошибки.
+            error_msg: Полный traceback от worker'а.
         """
-        self.split_output.set_report_text(f"Error: {error_msg}")
+        user_message = self._extract_user_message(error_msg)
+
+        if user_message:
+            self.split_output.set_report_text(user_message)
+        else:
+            logger.error(
+                "Unhandled error in background task:\n%s", error_msg
+            )
+            log_path = LOG_DIR / "prefixopt_gui.log"
+            self.split_output.set_report_text(
+                "An internal error occurred.\n"
+                f"Details have been written to:\n{log_path}"
+            )
+
         self.split_output.set_output_text("")
         self.progress_panel.set_status("Error")
 

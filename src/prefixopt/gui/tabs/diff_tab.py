@@ -205,16 +205,6 @@ class DiffTab(BaseOperationTab):
             f"Unchanged: {len(result.unchanged)}"
         )
 
-    def _on_error(self, error_msg: str) -> None:
-        """
-        Отображает сообщение об ошибке.
-
-        Args:
-            error_msg: Текст ошибки.
-        """
-        self.output_panel.set_text(f"Error: {error_msg}")
-        self.progress_panel.set_status("Error")
-
 
     def trigger_open(self) -> None:
         """

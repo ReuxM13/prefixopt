@@ -6,6 +6,9 @@
 для выполнения ресурсоемких задач без блокировки основного потока.
 """
 
+from pathlib import Path
+import logging
+from .. import LOG_DIR
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
@@ -15,11 +18,11 @@ from ..widgets.output_panel import OutputPanel
 from ..widgets.progress_panel import ProgressPanel
 from ..workers import Worker
 
+logger = logging.getLogger("prefixopt.gui.tab")
+
 
 class BaseOperationTab(QWidget):
-    """
-    Базовая вкладка операций с адаптивным разделителем и управлением состоянием.
-    """
+    """Базовая вкладка операций с адаптивным разделителем и управлением состоянием."""
 
     _CONTROL_INITIAL_RATIO = 95
     _OUTPUT_INITIAL_RATIO = 5
@@ -142,9 +145,9 @@ class BaseOperationTab(QWidget):
         Восстанавливает доступность элементов управления после завершения задачи.
         """
         self._is_running = False
+        self._current_worker = None
         self.control_widget.setEnabled(True)
         self.progress_panel.set_busy(False)
-        self._current_worker = None
 
     def _start_worker(self, worker: Worker, status_text: str) -> bool:
         """
@@ -153,7 +156,7 @@ class BaseOperationTab(QWidget):
         Сигналы result и error подключаются во вкладке до вызова этого метода.
 
         Args:
-            worker: Подготовленный worker.
+            worker: Подготовленный worker с подключенными result/error.
             status_text: Текст статуса на время выполнения.
 
         Returns:
@@ -173,8 +176,7 @@ class BaseOperationTab(QWidget):
         """
         Запрашивает мягкую отмену текущей задачи.
 
-        Интерфейс разблокируется сразу.
-        Поздний результат задачи игнорируется worker'ом.
+        Интерфейс разблокируется сразу. Результат задачи игнорируется.
         """
         if self._current_worker is None or not self._is_running:
             return
@@ -197,6 +199,69 @@ class BaseOperationTab(QWidget):
         """
         if self._is_running:
             self._restore_idle_state()
+
+    def _on_error(self, error_msg: str) -> None:
+        """
+        Обрабатывает ошибку фоновой задачи.
+
+        Ошибки валидации входных данных (ValueError, FileNotFoundError,
+        PermissionError, OSError) отображаются пользователю как понятное
+        сообщение. Внутренние ошибки программы логируются в файл,
+        пользователю показывается краткое уведомление.
+
+        Args:
+            error_msg: Полный traceback от worker'а.
+        """
+        user_message = self._extract_user_message(error_msg)
+
+        if user_message:
+            self.output_panel.set_text(user_message)
+        else:
+            logger.error(
+                "Unhandled error in background task:\n%s", error_msg
+            )
+            log_path = LOG_DIR / "prefixopt_gui.log"
+            self.output_panel.set_text(
+                "An internal error occurred.\n"
+                f"Details have been written to:\n{log_path}"
+            )
+
+        self.progress_panel.set_status("Error")
+
+    @staticmethod
+    def _extract_user_message(traceback_text: str) -> str:
+        """
+        Извлекает понятное пользователю сообщение из traceback.
+
+        Распознает типы исключений, вызванных некорректным вводом:
+        ValueError, FileNotFoundError, PermissionError, OSError.
+        Возвращает последнюю строку с сообщением об ошибке.
+
+        Args:
+            traceback_text: Полный traceback.
+
+        Returns:
+            Понятное пользователю сообщение или пустая строка,
+            если ошибка не является пользовательской.
+        """
+        user_exceptions = (
+            "ValueError:",
+            "FileNotFoundError:",
+            "PermissionError:",
+            "OSError:",
+        )
+
+        lines = traceback_text.strip().splitlines()
+        if not lines:
+            return ""
+
+        last_line = lines[-1].strip()
+
+        for prefix in user_exceptions:
+            if last_line.startswith(prefix):
+                return last_line[len(prefix):].strip()
+
+        return ""
 
     def _show_placeholder(self, title: str) -> None:
         """
@@ -245,15 +310,11 @@ class BaseOperationTab(QWidget):
         pass
 
     def trigger_save(self) -> None:
-        """
-        Инициирует сохранение результата через панель вывода.
-        """
+        """Инициирует сохранение результата через панель вывода."""
         if hasattr(self.output_panel, "save_button"):
             self.output_panel.save_button.click()
 
     def trigger_copy(self) -> None:
-        """
-        Инициирует копирование результата через панель вывода.
-        """
+        """Инициирует копирование результата через панель вывода."""
         if hasattr(self.output_panel, "copy_button"):
             self.output_panel.copy_button.click()

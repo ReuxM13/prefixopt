@@ -4,13 +4,16 @@
 Определяет системную тему оформления и применяет глобальную стилизацию.
 """
 
+import logging
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QIcon, QPalette, QColor
+from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication
 
 from .main_window import MainWindow
+
+logger = logging.getLogger("prefixopt.gui.app")
 
 
 def _is_dark_theme_windows() -> bool:
@@ -61,16 +64,12 @@ def _apply_dark_palette(app: QApplication) -> None:
     """
     Применяет тёмную палитру к приложению через Fusion.
 
-    Fusion — единственный встроенный стиль Qt, корректно
-    поддерживающий произвольные палитры на всех платформах.
-
     Args:
         app: Экземпляр приложения.
     """
     app.setStyle("Fusion")
 
     palette = QPalette()
-
     palette.setColor(QPalette.ColorRole.Window, QColor(30, 30, 30))
     palette.setColor(QPalette.ColorRole.WindowText, QColor(212, 212, 212))
     palette.setColor(QPalette.ColorRole.Base, QColor(45, 45, 48))
@@ -84,7 +83,6 @@ def _apply_dark_palette(app: QApplication) -> None:
     palette.setColor(QPalette.ColorRole.Link, QColor(0, 120, 212))
     palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 120, 212))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
-
     palette.setColor(
         QPalette.ColorGroup.Disabled,
         QPalette.ColorRole.WindowText,
@@ -100,7 +98,6 @@ def _apply_dark_palette(app: QApplication) -> None:
         QPalette.ColorRole.ButtonText,
         QColor(128, 128, 128),
     )
-
     app.setPalette(palette)
 
 
@@ -114,7 +111,6 @@ def _apply_light_palette(app: QApplication) -> None:
     app.setStyle("Fusion")
 
     palette = QPalette()
-
     palette.setColor(QPalette.ColorRole.Window, QColor(255, 255, 255))
     palette.setColor(QPalette.ColorRole.WindowText, QColor(30, 30, 30))
     palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))
@@ -128,7 +124,6 @@ def _apply_light_palette(app: QApplication) -> None:
     palette.setColor(QPalette.ColorRole.Link, QColor(0, 120, 212))
     palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 120, 212))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
-
     palette.setColor(
         QPalette.ColorGroup.Disabled,
         QPalette.ColorRole.WindowText,
@@ -144,7 +139,6 @@ def _apply_light_palette(app: QApplication) -> None:
         QPalette.ColorRole.ButtonText,
         QColor(160, 160, 160),
     )
-
     app.setPalette(palette)
 
 
@@ -174,7 +168,6 @@ def _build_stylesheet(dark: bool) -> str:
             "border_focus": "#0078d4",
             "text": "#d4d4d4",
             "text_muted": "#808080",
-            "text_placeholder": "#5a5a5a",
             "text_button": "#ffffff",
             "text_group_title": "#9cdcfe",
             "scrollbar_bg": "#1e1e1e",
@@ -206,7 +199,6 @@ def _build_stylesheet(dark: bool) -> str:
             "border_focus": "#0078d4",
             "text": "#1e1e1e",
             "text_muted": "#6e6e6e",
-            "text_placeholder": "#a0a0a0",
             "text_button": "#1e1e1e",
             "text_group_title": "#0078d4",
             "scrollbar_bg": "#f0f0f0",
@@ -232,8 +224,6 @@ def _build_stylesheet(dark: bool) -> str:
         QMainWindow {{
             background-color: {c["bg"]};
         }}
-
-        /* --- Tabs --- */
 
         QTabWidget::pane {{
             border: 1px solid {c["tab_border"]};
@@ -263,8 +253,6 @@ def _build_stylesheet(dark: bool) -> str:
             color: {c["text"]};
         }}
 
-        /* --- Group boxes --- */
-
         QGroupBox {{
             background-color: {c["bg_group"]};
             border: 1px solid {c["border"]};
@@ -280,8 +268,6 @@ def _build_stylesheet(dark: bool) -> str:
             padding: 2px 8px;
             color: {c["text_group_title"]};
         }}
-
-        /* --- Inputs --- */
 
         QLineEdit, QPlainTextEdit, QTextEdit {{
             background-color: {c["bg_input"]};
@@ -299,8 +285,6 @@ def _build_stylesheet(dark: bool) -> str:
         QLineEdit[readOnly="true"] {{
             background-color: {c["bg_alt"]};
         }}
-
-        /* --- Buttons --- */
 
         QPushButton {{
             background-color: {c["bg_button"]};
@@ -338,8 +322,6 @@ def _build_stylesheet(dark: bool) -> str:
             background-color: {c["bg_button_primary_pressed"]};
         }}
 
-        /* --- Checkboxes & Radio --- */
-
         QCheckBox, QRadioButton {{
             color: {c["text"]};
             spacing: 6px;
@@ -349,8 +331,6 @@ def _build_stylesheet(dark: bool) -> str:
             width: 16px;
             height: 16px;
         }}
-
-        /* --- ComboBox --- */
 
         QComboBox {{
             background-color: {c["bg_input"]};
@@ -378,8 +358,6 @@ def _build_stylesheet(dark: bool) -> str:
             selection-color: #ffffff;
         }}
 
-        /* --- SpinBox --- */
-
         QSpinBox {{
             background-color: {c["bg_input"]};
             color: {c["text"]};
@@ -392,13 +370,9 @@ def _build_stylesheet(dark: bool) -> str:
             border: 1px solid {c["border_focus"]};
         }}
 
-        /* --- Labels --- */
-
         QLabel {{
             color: {c["text"]};
         }}
-
-        /* --- Table --- */
 
         QTableWidget {{
             background-color: {c["bg_input"]};
@@ -414,8 +388,6 @@ def _build_stylesheet(dark: bool) -> str:
             padding: 4px;
             font-weight: bold;
         }}
-
-        /* --- Splitter --- */
 
         QSplitter::handle {{
             background: {c["splitter"]};
@@ -437,8 +409,6 @@ def _build_stylesheet(dark: bool) -> str:
             background: {c["splitter_pressed"]};
         }}
 
-        /* --- Progress bar --- */
-
         QProgressBar {{
             background-color: {c["progress_bg"]};
             border: 1px solid {c["border"]};
@@ -452,8 +422,6 @@ def _build_stylesheet(dark: bool) -> str:
             background-color: {c["progress_chunk"]};
             border-radius: 3px;
         }}
-
-        /* --- Scrollbar --- */
 
         QScrollBar:vertical {{
             background: {c["scrollbar_bg"]};
@@ -497,14 +465,10 @@ def _build_stylesheet(dark: bool) -> str:
             width: 0;
         }}
 
-        /* --- Scroll area --- */
-
         QScrollArea {{
             border: none;
             background-color: transparent;
         }}
-
-        /* --- Menu --- */
 
         QMenu {{
             background-color: {c["bg_input"]};
@@ -541,6 +505,8 @@ def run_gui() -> None:
 
     app.setStyleSheet(_build_stylesheet(dark))
 
+    logger.info("GUI started (dark=%s)", dark)
+
     window = MainWindow()
 
     if icon_path.exists():
@@ -557,3 +523,5 @@ def run_gui() -> None:
 
     window.show()
     app.exec()
+
+    logger.info("GUI closed")
