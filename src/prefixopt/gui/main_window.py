@@ -3,7 +3,7 @@
 """
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QMainWindow, QTabWidget
+from PySide6.QtWidgets import QMainWindow, QTabWidget, QApplication
 
 from .tabs.optimize_tab import OptimizeTab
 from .tabs.filter_tab import FilterTab
@@ -21,43 +21,30 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("prefixopt GUI")
-        self.resize(1350, 900)
+        
+        screen_geometry = QApplication.primaryScreen().availableGeometry()
+        width = min(1350, int(screen_geometry.width() * 0.9))
+        height = min(900, int(screen_geometry.height() * 0.9))
+        self.resize(width, height)
+        self.setMinimumSize(640, 480)
+        
+        self._init_ui()
 
-        self._settings = SettingsManager.instance()
+    def _init_ui(self) -> None:
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
 
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
+        tabs.addTab(OptimizeTab(), "Optimize")
+        tabs.addTab(FilterTab(), "Filter")
+        tabs.addTab(MergeTab(), "Merge")
+        tabs.addTab(IntersectTab(), "Intersect")
+        tabs.addTab(DiffTab(), "Diff")
+        tabs.addTab(ExcludeTab(), "Exclude")
+        tabs.addTab(SplitTab(), "Split")
+        tabs.addTab(StatsTab(), "Stats")
+        tabs.addTab(CheckTab(), "Check")
 
-        self.optimize_tab = OptimizeTab()
-        self.filter_tab = FilterTab()
-        self.merge_tab = MergeTab()
-        self.intersect_tab = IntersectTab()
-        self.diff_tab = DiffTab()
-        self.exclude_tab = ExcludeTab()
-        self.split_tab = SplitTab()
-        self.stats_tab = StatsTab()
-        self.check_tab = CheckTab()
-
-        self.tabs.addTab(self.optimize_tab, "Optimize")
-        self.tabs.addTab(self.filter_tab, "Filter")
-        self.tabs.addTab(self.merge_tab, "Merge")
-        self.tabs.addTab(self.intersect_tab, "Intersect")
-        self.tabs.addTab(self.diff_tab, "Diff")
-        self.tabs.addTab(self.exclude_tab, "Exclude")
-        self.tabs.addTab(self.split_tab, "Split")
-        self.tabs.addTab(self.stats_tab, "Stats")
-        self.tabs.addTab(self.check_tab, "Check")
-
-        self.setCentralWidget(self.tabs)
-
-        # Регистрация вкладок в менеджере настроек
-        for idx in range(self.tabs.count()):
-            tab = self.tabs.widget(idx)
-            name = self.tabs.tabText(idx)
-            self._settings.register_tab(name, tab)
-
-        self._setup_shortcuts()
-        self._settings.load_all()
+        self.setCentralWidget(tabs)
 
     def _setup_shortcuts(self) -> None:
         self.shortcut_open = QShortcut(QKeySequence("Ctrl+O"), self)
@@ -106,7 +93,3 @@ class MainWindow(QMainWindow):
         output_panel = getattr(tab, 'output_panel', None)
         if output_panel and hasattr(output_panel, 'copy_button'):
             output_panel.copy_button.click()
-
-    def closeEvent(self, event):
-        self._settings.save_all()
-        super().closeEvent(event)

@@ -1,10 +1,7 @@
-"""
-Базовый класс для всех вкладок с вертикальным сплиттером между управлением и выводом.
-"""
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QSplitter
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QScrollArea
 
 from ..widgets.output_panel import OutputPanel
 from ..widgets.progress_panel import ProgressPanel
@@ -12,15 +9,22 @@ from ..widgets.progress_panel import ProgressPanel
 
 class BaseOperationTab(QWidget):
     """
-    Базовая вкладка с вертикальным сплиттером.
+    Базовая вкладка с вертикальным сплиттером и прокруткой области управления.
     """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.root_layout = QVBoxLayout(self)
+        
+        # Область управления с прокруткой
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QScrollArea.NoFrame)
+        
         self.control_widget = QWidget()
         self.control_layout = QVBoxLayout(self.control_widget)
         self.control_layout.setContentsMargins(0, 0, 0, 0)
+        self.scroll_area.setWidget(self.control_widget)
         
         self.progress_panel = ProgressPanel()
         self.output_panel = OutputPanel()
@@ -29,11 +33,12 @@ class BaseOperationTab(QWidget):
 
     def _setup_splitter(self, output_widget: QWidget) -> None:
         """
-        Создаёт вертикальный сплиттер между control_widget и output_widget.
+        Создаёт вертикальный сплиттер между областью управления (с прокруткой)
+        и output_widget (может быть OutputPanel или SplitOutputPanel).
         """
         self.splitter = QSplitter(Qt.Vertical)
         self.splitter.setChildrenCollapsible(False)
-        self.splitter.addWidget(self.control_widget)
+        self.splitter.addWidget(self.scroll_area)
         self.splitter.addWidget(output_widget)
         
         self.splitter.setStretchFactor(0, 4)
