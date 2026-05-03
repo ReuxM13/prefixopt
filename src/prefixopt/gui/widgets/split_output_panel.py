@@ -1,28 +1,43 @@
 """
-Виджет с вертикальным сплиттером для отчёта и вывода, с возможностью отделения.
+Панель с вертикальным разделителем для структурированного отчета и вывода.
+
+Верхняя область поддерживает HTML-рендеринг для таблиц и форматирования.
+Нижняя область — OutputPanel с действиями Save/Copy/Clear.
 """
+
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QPlainTextEdit, QPushButton
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QPushButton,
+    QSplitter,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
-from .output_panel import OutputPanel
 from .detachable_manager import DetachableWidgetManager
+from .output_panel import OutputPanel
 
 
 class SplitOutputPanel(QWidget):
-    """
-    Панель, содержащая две области: верхнюю для структурированного отчёта (только текст)
-    и нижнюю — OutputPanel с кнопками Save/Copy/Clear.
-    При запуске обе области показываются минимального размера.
-    """
+    """Панель из двух областей: HTML-отчет и текстовый вывод."""
 
     def __init__(
         self,
         report_title: str = "Structured report",
         output_title: str = "Output",
-        parent: Optional[QWidget] = None
+        parent: Optional[QWidget] = None,
     ) -> None:
+        """
+        Инициализирует двойную панель вывода.
+
+        Args:
+            report_title: Заголовок верхней области отчета.
+            output_title: Заголовок нижней области вывода.
+            parent: Родительский виджет.
+        """
         super().__init__(parent)
         self._report_title = report_title
         self._output_title = output_title
@@ -31,10 +46,10 @@ class SplitOutputPanel(QWidget):
         self._init_ui()
 
     def _init_ui(self) -> None:
+        """Создает структуру панели с разделителем и кнопкой отделения."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # ---- Toolbar с кнопкой Pop out ----
         toolbar = QHBoxLayout()
         toolbar.addStretch()
         self._detach_btn = QPushButton("↗ Pop out")
@@ -44,22 +59,22 @@ class SplitOutputPanel(QWidget):
         self.splitter = QSplitter(Qt.Vertical)
         self.splitter.setChildrenCollapsible(False)
 
-        self.report_edit = QPlainTextEdit()
+        self.report_edit = QTextEdit()
         self.report_edit.setReadOnly(True)
-        self.report_edit.setPlaceholderText(f"{self._report_title} will appear here.")
+        self.report_edit.setPlaceholderText(
+            f"{self._report_title} will appear here."
+        )
         self.splitter.addWidget(self.report_edit)
 
         self.output_panel = OutputPanel(title=self._output_title)
         self.splitter.addWidget(self.output_panel)
 
-        # Разрешаем сжиматься до нуля
         self.report_edit.setMinimumHeight(0)
         self.output_panel.setMinimumHeight(0)
 
         self.splitter.setStretchFactor(0, 3)
         self.splitter.setStretchFactor(1, 7)
 
-        # После завершения компоновки сжимаем панели до минимального размера
         QTimer.singleShot(0, lambda: self.splitter.setSizes([0, 0]))
 
         layout.addWidget(self.splitter)
@@ -67,23 +82,58 @@ class SplitOutputPanel(QWidget):
         self._detach_manager = DetachableWidgetManager(self, self._detach_btn)
 
     def set_report_text(self, text: str) -> None:
+        """
+        Устанавливает plain text в область отчета.
+
+        Args:
+            text: Текст отчета.
+        """
         self.report_edit.setPlainText(text)
 
+    def set_report_html(self, html: str) -> None:
+        """
+        Устанавливает HTML-содержимое в область отчета.
+
+        Args:
+            html: HTML-текст отчета.
+        """
+        self.report_edit.setHtml(html)
+
     def append_report_text(self, text: str) -> None:
+        """
+        Добавляет plain text в конец области отчета.
+
+        Args:
+            text: Текст для добавления.
+        """
         current = self.report_edit.toPlainText()
         if current:
-            self.report_edit.setPlainText(current + "\n" + text)
-        else:
-            self.report_edit.setPlainText(text)
+            self.report_edit.setPlainText(f"{current}\n{text}")
+            return
+        self.report_edit.setPlainText(text)
 
     def clear_report(self) -> None:
+        """Очищает область отчета."""
         self.report_edit.clear()
 
     def get_output_panel(self) -> OutputPanel:
+        """
+        Возвращает ссылку на OutputPanel.
+
+        Returns:
+            OutputPanel нижней области.
+        """
         return self.output_panel
 
     def set_output_text(self, text: str) -> None:
+        """
+        Устанавливает plain text в область вывода.
+
+        Args:
+            text: Текст для отображения.
+        """
         self.output_panel.set_text(text)
 
     def clear_output(self) -> None:
+        """Очищает область вывода."""
         self.output_panel.clear()
