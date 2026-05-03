@@ -7,15 +7,41 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QIcon, QPalette
+from PySide6.QtGui import QIcon, QPalette, QColor
 from PySide6.QtWidgets import QApplication
 
 from .main_window import MainWindow
 
 
+def _is_dark_theme_windows() -> bool:
+    """
+    Определяет тёмную тему Windows через реестр.
+
+    Читает ключ AppsUseLightTheme из персонализации.
+    Значение 0 соответствует тёмной теме.
+
+    Returns:
+        True если активна тёмная тема Windows.
+    """
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        )
+        value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        winreg.CloseKey(key)
+        return value == 0
+    except Exception:
+        return False
+
+
 def _is_dark_theme(app: QApplication) -> bool:
     """
-    Определяет текущую системную тему по яркости фона палитры.
+    Определяет текущую системную тему.
+
+    На Windows использует реестр, на остальных платформах
+    определяет тему по яркости фона палитры.
 
     Args:
         app: Экземпляр приложения.
@@ -23,9 +49,103 @@ def _is_dark_theme(app: QApplication) -> bool:
     Returns:
         True если активна тёмная тема.
     """
+    if sys.platform == "win32":
+        return _is_dark_theme_windows()
+
     bg = app.palette().color(QPalette.ColorRole.Window)
     luminance = 0.299 * bg.redF() + 0.587 * bg.greenF() + 0.114 * bg.blueF()
     return luminance < 0.5
+
+
+def _apply_dark_palette(app: QApplication) -> None:
+    """
+    Применяет тёмную палитру к приложению через Fusion.
+
+    Fusion — единственный встроенный стиль Qt, корректно
+    поддерживающий произвольные палитры на всех платформах.
+
+    Args:
+        app: Экземпляр приложения.
+    """
+    app.setStyle("Fusion")
+
+    palette = QPalette()
+
+    palette.setColor(QPalette.ColorRole.Window, QColor(30, 30, 30))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(212, 212, 212))
+    palette.setColor(QPalette.ColorRole.Base, QColor(45, 45, 48))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(37, 37, 38))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(45, 45, 48))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(212, 212, 212))
+    palette.setColor(QPalette.ColorRole.Text, QColor(212, 212, 212))
+    palette.setColor(QPalette.ColorRole.Button, QColor(60, 60, 60))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(212, 212, 212))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 255, 255))
+    palette.setColor(QPalette.ColorRole.Link, QColor(0, 120, 212))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 120, 212))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.WindowText,
+        QColor(128, 128, 128),
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.Text,
+        QColor(128, 128, 128),
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.ButtonText,
+        QColor(128, 128, 128),
+    )
+
+    app.setPalette(palette)
+
+
+def _apply_light_palette(app: QApplication) -> None:
+    """
+    Применяет светлую палитру через Fusion для единообразия стилей.
+
+    Args:
+        app: Экземпляр приложения.
+    """
+    app.setStyle("Fusion")
+
+    palette = QPalette()
+
+    palette.setColor(QPalette.ColorRole.Window, QColor(255, 255, 255))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(30, 30, 30))
+    palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(245, 245, 245))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 255))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(30, 30, 30))
+    palette.setColor(QPalette.ColorRole.Text, QColor(30, 30, 30))
+    palette.setColor(QPalette.ColorRole.Button, QColor(232, 232, 232))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(30, 30, 30))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(0, 0, 0))
+    palette.setColor(QPalette.ColorRole.Link, QColor(0, 120, 212))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 120, 212))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.WindowText,
+        QColor(160, 160, 160),
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.Text,
+        QColor(160, 160, 160),
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.ButtonText,
+        QColor(160, 160, 160),
+    )
+
+    app.setPalette(palette)
 
 
 def _build_stylesheet(dark: bool) -> str:
@@ -69,7 +189,6 @@ def _build_stylesheet(dark: bool) -> str:
             "tab_bg": "#2d2d30",
             "tab_hover_bg": "#383838",
             "tab_border": "#3f3f46",
-            "radio_indicator": "#0078d4",
         }
     else:
         c = {
@@ -102,7 +221,6 @@ def _build_stylesheet(dark: bool) -> str:
             "tab_bg": "#f0f0f0",
             "tab_hover_bg": "#e5e5e5",
             "tab_border": "#d0d0d0",
-            "radio_indicator": "#0078d4",
         }
 
     return f"""
@@ -202,7 +320,6 @@ def _build_stylesheet(dark: bool) -> str:
         }}
 
         QPushButton:disabled {{
-            opacity: 0.5;
             color: {c["text_muted"]};
         }}
 
@@ -261,10 +378,41 @@ def _build_stylesheet(dark: bool) -> str:
             selection-color: #ffffff;
         }}
 
+        /* --- SpinBox --- */
+
+        QSpinBox {{
+            background-color: {c["bg_input"]};
+            color: {c["text"]};
+            border: 1px solid {c["border"]};
+            border-radius: 4px;
+            padding: 4px 8px;
+        }}
+
+        QSpinBox:focus {{
+            border: 1px solid {c["border_focus"]};
+        }}
+
         /* --- Labels --- */
 
         QLabel {{
             color: {c["text"]};
+        }}
+
+        /* --- Table --- */
+
+        QTableWidget {{
+            background-color: {c["bg_input"]};
+            color: {c["text"]};
+            border: 1px solid {c["border"]};
+            gridline-color: {c["border"]};
+        }}
+
+        QHeaderView::section {{
+            background-color: {c["bg_group"]};
+            color: {c["text"]};
+            border: 1px solid {c["border"]};
+            padding: 4px;
+            font-weight: bold;
         }}
 
         /* --- Splitter --- */
@@ -385,6 +533,12 @@ def run_gui() -> None:
         app.setWindowIcon(app_icon)
 
     dark = _is_dark_theme(app)
+
+    if dark:
+        _apply_dark_palette(app)
+    else:
+        _apply_light_palette(app)
+
     app.setStyleSheet(_build_stylesheet(dark))
 
     window = MainWindow()
