@@ -8,24 +8,59 @@
 
 ## Description
 
-`prefixopt` is a high-performance CLI tool designed for network engineers and security specialists. It automates routine tasks associated with managing large IP prefix lists: removing duplicates, aggregating subnets (CIDR summarization), filtering bogons, finding intersections, performing semantic diffs, and executing network subtraction (hole punching).
+**prefixopt** is a high-performance CLI utility for network engineers and security professionals who work with large IP prefix lists.
 
-It helps organize and clean up messy IP address lists:
-- **Optimization:** Automatically removes duplicates and nested networks (e.g., drops a `/32` if a covering `/24` exists).
-- **Aggregation:** Merges adjacent subnets into a single supernet where mathematically possible.
-- **Filtering:** Cleans lists by removing Bogons, Private networks (RFC 1918), Loopbacks, and Multicast addresses.
-- **Subtraction:** Excludes specific addresses or subnets from a master list, automatically splitting networks into smaller fragments.
-- **Comparison:** Semantically compares two lists, accurately showing which subnets were added or removed regardless of their CIDR representation.
-- **Versatility:** The parser automatically extracts IPs, CIDRs, and IP ranges (e.g., `10.0.0.1 - 10.0.0.50`) from any text-based format (logs, router configs, CSVs without headers, JSON).
-- **Pipe Support (STDIN):** Fully supports the UNIX philosophy. You can pass data via standard input instead of files.
+It automates the most common and error-prone tasks involved in prefix list maintenance: deduplication, CIDR aggregation, bogon filtering, semantic comparison, overlap detection, and network subtraction (hole punching).
+
+Whether You are cleaning up firewall rules, preparing scan scopes, auditing infrastructure changes, or normalizing threat feeds, **prefixopt** helps turn noisy and inconsistent input into clean, reliable output.
+
+### Key capabilities
+
+- **Optimization**  
+  Removes duplicate and nested prefixes automatically.  
+  Example: a `/32` is discarded if it is already covered by a parent `/24`.
+
+- **Aggregation**  
+  Merges adjacent subnets into a larger supernet whenever the aggregation is mathematically valid.
+
+- **Filtering**  
+  Removes unwanted address space such as Bogons, Private networks (RFC 1918), Loopbacks, Multicast, and other non-routable ranges.
+
+- **Subtraction**  
+  Excludes one list from another, automatically splitting larger networks into smaller fragments when needed.
+
+- **Semantic comparison**  
+  Compares prefix lists by their actual address space rather than by text representation.  
+  This makes it possible to detect real changes even when the CIDR notation differs.
+
+- **Intersection analysis**  
+  Detects exact matches and partial overlaps between two or more sources.
+
+- **Flexible parsing**  
+  Extracts IPs, CIDRs, and IP ranges (for example, `10.0.0.1 - 10.0.0.50`) from arbitrary text-based sources such as logs, router configs, raw CSV, and JSON.
+
+- **STDIN / pipe support**  
+  Follows the UNIX philosophy and works well in pipelines.  
   Supported commands: `optimize`, `filter`, `stats`, `check`, `split`, `exclude`.
-  Example: `cat logs.txt | prefixopt optimize`
 
-### Who is the utility for?
-- **Operations Engineers (Ops):** `optimize`, `add`, `merge`, `stats`.
-- **Security Analysts (Blue Team):** `diff` (infrastructure audit), `intersect` (rule conflict analysis), `filter` (threat feed sanitization).
-- **Pentesters & Researchers (Red Team):** `exclude` (scope management), `split` (target slicing for scanners), `check`.
+  Example:
+  ```bash
+  cat logs.txt | prefixopt optimize
+  ```
 
+## Who is it for?
+- **Operations Engineers (Ops)**
+  `optimize`, `add`, `merge`, `stats`
+
+- **Security Analysts (Blue Team)**
+  `diff` for infrastructure audits,
+  `intersect` for rule conflict analysis,
+  `filter` for threat feed sanitization
+
+- **Pentesters and Researchers (Red Team)**
+  `exclude` for scope management,
+  `split` for scanner target slicing,
+  `check` for quick coverage validation
 ---
 
 ## Installation
@@ -55,6 +90,10 @@ pip install -e .[gui]
 
 <p align="left">
   <img src="static\usage.png" alt="prefixopt using" width="100%">
+</p>
+
+<p align="left">
+  <img src="static\GUI.png" alt="prefixopt using" width="100%">
 </p>
 
 ```bash
