@@ -771,6 +771,7 @@ def run_exclude(
 def run_split(
     source: InputSource,
     target_length: int,
+    fmt: str = "list",
     strict: bool = False,
 ) -> SplitResult:
     """
@@ -779,6 +780,7 @@ def run_split(
     Args:
         source: Источник данных.
         target_length: Целевая длина префикса.
+        fmt: Формат вывода ("list" или "csv").
         strict: Строгая валидация.
 
     Returns:
@@ -790,7 +792,7 @@ def run_split(
         subs = split_network(net, target_length)
         all_subnets.extend(subs)
 
-    formatted_text = format_prefixes(all_subnets, "list")
+    formatted_text = format_prefixes(all_subnets, fmt)
 
     return SplitResult(
         total_count=len(all_subnets),

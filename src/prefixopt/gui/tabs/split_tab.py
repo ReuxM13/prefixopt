@@ -5,6 +5,7 @@
 from typing import Any
 
 from PySide6.QtWidgets import (
+    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -44,12 +45,17 @@ class SplitTab(BaseOperationTab):
         self.control_layout.addWidget(self.input_panel)
 
         options = OptionsGroup("Split options")
+
         self.target_length = QSpinBox()
         self.target_length.setRange(0, 128)
         self.target_length.setValue(24)
 
+        self.output_format = QComboBox()
+        self.output_format.addItems(["list", "csv"])
+
         form = QFormLayout()
         form.addRow("Target prefix length:", self.target_length)
+        form.addRow("Output format:", self.output_format)
         options.add_layout(form)
 
         self.control_layout.addWidget(options)
@@ -81,7 +87,12 @@ class SplitTab(BaseOperationTab):
         if source is None:
             return
 
-        worker = Worker(run_split, source, self.target_length.value())
+        worker = Worker(
+            run_split,
+            source,
+            self.target_length.value(),
+            self.output_format.currentText(),
+        )
         worker.signals.result.connect(self._on_split_result)
         worker.signals.error.connect(self._on_error)
         self._start_worker(worker, "Splitting...")
@@ -117,6 +128,7 @@ class SplitTab(BaseOperationTab):
         """
         return {
             "target_length": self.target_length.value(),
+            "output_format": self.output_format.currentText(),
         }
 
     def load_settings(self, state: dict) -> None:
@@ -128,4 +140,10 @@ class SplitTab(BaseOperationTab):
         """
         if not state:
             return
+
         self.target_length.setValue(int(state.get("target_length", 24)))
+
+        fmt = state.get("output_format", "list")
+        idx = self.output_format.findText(fmt)
+        if idx >= 0:
+            self.output_format.setCurrentIndex(idx)
