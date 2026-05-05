@@ -35,12 +35,13 @@ class ExcludeTab(BaseOperationTab):
 
     def _init_ui(self) -> None:
         """Создает структуру вкладки."""
-        self.control_layout.addWidget(
-            QLabel(
-                "Subtract one target from a source list. "
-                "Target may be a single prefix or a list."
-            )
+        desc = QLabel(
+            "Subtract one target from a source list. "
+            "Target may be a single prefix or a list."
         )
+        desc.setProperty("role", "description")
+        desc.setWordWrap(True)
+        self.control_layout.addWidget(desc)
 
         self.source_input = InputPanel(
             title="Source",
@@ -86,6 +87,17 @@ class ExcludeTab(BaseOperationTab):
         self.output_format = QComboBox()
         self.output_format.addItems(["list", "csv"])
         self.strict = QCheckBox("Strict mode")
+        self.keep_comments.setToolTip(
+            "Inherit comments from parent networks to fragments"
+        )
+        self.ipv4_only.setToolTip("Process only IPv4 prefixes, skip IPv6")
+        self.ipv6_only.setToolTip("Process only IPv6 prefixes, skip IPv4")
+        self.output_format.setToolTip(
+            "Output format: one prefix per line or comma-separated"
+        )
+        self.strict.setToolTip(
+            "Reject prefixes with incorrect subnet masks"
+        )
 
         form = QFormLayout()
         form.addRow(self.keep_comments)
@@ -99,6 +111,7 @@ class ExcludeTab(BaseOperationTab):
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Exclude")
         self.run_button.setProperty("primary", True)
+        self.run_button.setToolTip("Ctrl+R")
         run_row.addStretch()
         run_row.addWidget(self.run_button)
         self.control_layout.addLayout(run_row)

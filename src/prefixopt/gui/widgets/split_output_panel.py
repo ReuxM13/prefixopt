@@ -1,7 +1,7 @@
 """
 Панель с вертикальным разделителем для структурированного отчета и вывода.
 
-Верхняя область поддерживает HTML-рендеринг для таблиц и форматирования.
+Верхняя область поддерживает HTML-рендеринг.
 Нижняя область — OutputPanel с действиями Save/Copy/Clear.
 """
 
@@ -10,6 +10,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QSplitter,
     QTextEdit,
@@ -22,7 +23,7 @@ from .output_panel import OutputPanel
 
 
 class SplitOutputPanel(QWidget):
-    """Панель из двух областей: HTML-отчет и текстовый вывод."""
+    """Панель из двух областей: HTML-отчет и текстовый вывод со счётчиком строк."""
 
     def __init__(
         self,
@@ -46,11 +47,13 @@ class SplitOutputPanel(QWidget):
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """Создает структуру панели с разделителем и кнопкой отделения."""
+        """Создает структуру панели с разделителем и счётчиком строк."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
         toolbar = QHBoxLayout()
+        self.report_line_count = QLabel("Lines: 0")
+        toolbar.addWidget(self.report_line_count)
         toolbar.addStretch()
         self._detach_btn = QPushButton("↗ Pop out")
         toolbar.addWidget(self._detach_btn)
@@ -64,6 +67,7 @@ class SplitOutputPanel(QWidget):
         self.report_edit.setPlaceholderText(
             f"{self._report_title} will appear here."
         )
+        self.report_edit.textChanged.connect(self._update_report_line_count)
         self.splitter.addWidget(self.report_edit)
 
         self.output_panel = OutputPanel(title=self._output_title)
@@ -80,6 +84,12 @@ class SplitOutputPanel(QWidget):
         layout.addWidget(self.splitter)
 
         self._detach_manager = DetachableWidgetManager(self, self._detach_btn)
+
+    def _update_report_line_count(self) -> None:
+        """Обновляет счётчик строк области отчёта."""
+        text = self.report_edit.toPlainText()
+        count = len(text.splitlines()) if text else 0
+        self.report_line_count.setText(f"Report lines: {count:,}")
 
     def set_report_text(self, text: str) -> None:
         """

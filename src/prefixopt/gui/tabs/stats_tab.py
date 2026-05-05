@@ -77,9 +77,10 @@ class StatsTab(BaseOperationTab):
 
     def _init_ui(self) -> None:
         """Создает структуру вкладки."""
-        self.control_layout.addWidget(
-            QLabel("Show statistics for a prefix list.")
-        )
+        desc = QLabel("Show statistics for a prefix list.")
+        desc.setProperty("role", "description")
+        desc.setWordWrap(True)
+        self.control_layout.addWidget(desc)
 
         self.input_panel = InputPanel(
             title="Source",
@@ -90,10 +91,14 @@ class StatsTab(BaseOperationTab):
 
         controls_row = QHBoxLayout()
         self.show_details = QCheckBox("Show details")
+        self.show_details.setToolTip(
+            "Show IPv4/IPv6 breakdown and duplicate prefixes"
+        )
         controls_row.addWidget(self.show_details)
         controls_row.addStretch()
         self.run_button = QPushButton("Run Stats")
         self.run_button.setProperty("primary", True)
+        self.run_button.setToolTip("Ctrl+R")
         controls_row.addWidget(self.run_button)
         self.control_layout.addLayout(controls_row)
 

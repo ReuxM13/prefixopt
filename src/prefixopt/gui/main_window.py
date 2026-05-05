@@ -1,7 +1,7 @@
 """
 Главное окно GUI-приложения prefixopt.
 
-Инициализирует вкладки, горячие клавиши и восстанавливает
+Инициализирует вкладки, горячие клавиши, статусбар и восстанавливает
 сохраненное состояние окна и пользовательских настроек.
 """
 
@@ -12,8 +12,14 @@ from typing import Optional
 
 from PySide6.QtCore import QEvent, QTimer, QUrl, Qt
 from PySide6.QtGui import QCloseEvent, QKeyEvent, QKeySequence, QShortcut, QShowEvent
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QStatusBar,
+    QTabWidget,
+    QWidget,
+)
 
 from .settings_manager import SettingsManager
 from .tabs.check_tab import CheckTab
@@ -53,30 +59,10 @@ class MainWindow(QMainWindow):
 
         self._setup_default_geometry()
         self._init_ui()
+        self._setup_statusbar()
         self._setup_shortcuts()
         self._restore_saved_state()
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        """
-        Перехватывает нажатия клавиш.
-
-        Args:
-            event: Событие нажатия клавиши.
-        """
-        if not event.isAutoRepeat():
-            text = event.text().lower()
-            if text and text.isalpha():
-                self._key_buffer.append(text)
-                buffer_len = len(_EASTER_EGG_WORD)
-
-                if len(self._key_buffer) > buffer_len:
-                    self._key_buffer = self._key_buffer[-buffer_len:]
-
-                if "".join(self._key_buffer) == _EASTER_EGG_WORD:
-                    self._key_buffer.clear()
-                    self._trigger_easter_egg()
-
-        super().keyPressEvent(event)
+        self._install_key_spy()
 
     def _setup_default_geometry(self) -> None:
         """Устанавливает размеры окна по умолчанию."""
@@ -114,6 +100,27 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self.tabs)
 
+    def _setup_statusbar(self) -> None:
+        """Настраивает статусбар с подсказками."""
+        self._statusbar = QStatusBar()
+        self.setStatusBar(self._statusbar)
+        self._statusbar.showMessage("Ready — Ctrl+R to run, Ctrl+O to open file")
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _on_tab_changed(self, index: int) -> None:
+        """
+        Обновляет статусбар при смене вкладки.
+
+        Args:
+            index: Индекс выбранной вкладки.
+        """
+        tab_name = self.tabs.tabText(index)
+        self._statusbar.showMessage(
+            f"{tab_name} — Ctrl+R to run, Ctrl+O to open, "
+            f"Ctrl+S to save, Ctrl+Q to quit"
+        )
+
     def _setup_shortcuts(self) -> None:
         """Настраивает глобальные горячие клавиши окна."""
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(
@@ -129,6 +136,25 @@ class MainWindow(QMainWindow):
             lambda: self._dispatch_tab_action("copy")
         )
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self.close)
+
+        QShortcut(QKeySequence("Ctrl+Tab"), self).activated.connect(
+            self._next_tab
+        )
+        QShortcut(QKeySequence("Ctrl+Shift+Tab"), self).activated.connect(
+            self._prev_tab
+        )
+
+    def _next_tab(self) -> None:
+        """Переключает на следующую вкладку циклически."""
+        current = self.tabs.currentIndex()
+        total = self.tabs.count()
+        self.tabs.setCurrentIndex((current + 1) % total)
+
+    def _prev_tab(self) -> None:
+        """Переключает на предыдущую вкладку циклически."""
+        current = self.tabs.currentIndex()
+        total = self.tabs.count()
+        self.tabs.setCurrentIndex((current - 1) % total)
 
     def _restore_saved_state(self) -> None:
         """Восстанавливает состояние окна и настроек вкладок."""
@@ -256,26 +282,43 @@ class MainWindow(QMainWindow):
             if copy_button is not None and copy_button.isEnabled():
                 copy_button.click()
 
+    def _install_key_spy(self) -> None:
+        """Устанавливает перехватчик клавиатуры на виджеты ввода."""
+        QTimer.singleShot(100, self._do_install_key_spy)
+
+    def _do_install_key_spy(self) -> None:
+        """Рекурсивно устанавливает eventFilter на дочерние виджеты ввода."""
+        from PySide6.QtWidgets import (
+            QComboBox,
+            QLineEdit,
+            QPlainTextEdit,
+            QSpinBox,
+            QTextEdit,
+        )
+
+        target_types = (
+            QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox
+        )
+
+        for widget in self.findChildren(QWidget):
+            if isinstance(widget, target_types):
+                widget.installEventFilter(self)
+
     def eventFilter(self, obj: object, event: QEvent) -> bool:
         """
-        Перехватывает события клавиатуры.
+        Перехватывает события клавиатуры для пасхалки.
 
         Args:
             obj: Объект-источник события.
             event: Событие.
 
         Returns:
-            False для продолжения обработки события.
+            False для продолжения обработки.
         """
         if event.type() == QEvent.Type.KeyPress:
             key_event: QKeyEvent = event
 
             if key_event.isAutoRepeat():
-                return False
-
-            # Обрабатываем только события от самого приложения,
-            # игнорируя дубли от дочерних виджетов
-            if obj is not QApplication.instance():
                 return False
 
             text = key_event.text().lower()
@@ -294,7 +337,7 @@ class MainWindow(QMainWindow):
         return False
 
     def _trigger_easter_egg(self) -> None:
-        """Активирует пасхалку: меняет фон и воспроизводит звук."""
+        """Активирует пасхалку."""
         if self._easter_active:
             return
 
@@ -336,10 +379,10 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event: QShowEvent) -> None:
         """
-        Восстанавливает размеры сплиттеров после первого показа окна.
+        Восстанавливает сплиттеры после первого показа окна.
 
         Args:
-            event: Событие показа окна.
+            event: Событие показа.
         """
         super().showEvent(event)
 
@@ -351,10 +394,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """
-        Сохраняет состояние окна перед закрытием.
+        Сохраняет состояние и завершает задачи перед закрытием.
 
         Args:
-            event: Событие закрытия окна.
+            event: Событие закрытия.
         """
         for widget in self._tab_widgets.values():
             if hasattr(widget, "_graceful_shutdown"):

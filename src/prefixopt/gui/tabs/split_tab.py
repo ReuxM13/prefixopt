@@ -31,11 +31,12 @@ class SplitTab(BaseOperationTab):
 
     def _init_ui(self) -> None:
         """Создает структуру вкладки."""
-        self.control_layout.addWidget(
-            QLabel(
-                "Split a network or a list of networks into smaller subnets."
-            )
+        desc = QLabel(
+            "Split a network or a list of networks into smaller subnets."
         )
+        desc.setProperty("role", "description")
+        desc.setWordWrap(True)
+        self.control_layout.addWidget(desc)
 
         self.input_panel = InputPanel(
             title="Source",
@@ -53,6 +54,13 @@ class SplitTab(BaseOperationTab):
         self.output_format = QComboBox()
         self.output_format.addItems(["list", "csv"])
 
+        self.target_length.setToolTip(
+            "Target CIDR prefix length (e.g. 24 for /24 subnets)"
+        )
+        self.output_format.setToolTip(
+            "Output format: one prefix per line or comma-separated"
+        )
+
         form = QFormLayout()
         form.addRow("Target prefix length:", self.target_length)
         form.addRow("Output format:", self.output_format)
@@ -63,6 +71,7 @@ class SplitTab(BaseOperationTab):
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Split")
         self.run_button.setProperty("primary", True)
+        self.run_button.setToolTip("Ctrl+R")
         run_row.addStretch()
         run_row.addWidget(self.run_button)
 

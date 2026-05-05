@@ -35,12 +35,13 @@ class CheckTab(BaseOperationTab):
 
     def _init_ui(self) -> None:
         """Создает структуру вкладки."""
-        self.control_layout.addWidget(
-            QLabel(
-                "Check whether an IP address or subnet is contained "
-                "in the source list."
-            )
+        desc = QLabel(
+            "Check whether an IP address or subnet is contained "
+            "in the source list."
         )
+        desc.setProperty("role", "description")
+        desc.setWordWrap(True)
+        self.control_layout.addWidget(desc)
 
         self.target_input = PrefixInputWidget(
             title="Target",
@@ -59,6 +60,7 @@ class CheckTab(BaseOperationTab):
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Check")
         self.run_button.setProperty("primary", True)
+        self.run_button.setToolTip("Ctrl+R")
         run_row.addStretch()
         run_row.addWidget(self.run_button)
         self.control_layout.addLayout(run_row)

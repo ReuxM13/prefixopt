@@ -1,8 +1,5 @@
 """
-Панель вывода результата с поддержкой plain text, HTML и пейджинации.
-
-При превышении порога отображаемых строк показывается предупреждение.
-Полный результат доступен через кнопку Save.
+Панель вывода результата с пейджинацией, иконками и placeholder.
 """
 
 import re
@@ -25,6 +22,7 @@ from PySide6.QtWidgets import (
 from .detachable_manager import DetachableWidgetManager
 
 _PAGE_SIZE = 10_000
+_PLACEHOLDER = "Results will appear here after running the operation."
 
 
 def strip_rich_tags(text: str) -> str:
@@ -41,7 +39,7 @@ def strip_rich_tags(text: str) -> str:
 
 
 class OutputPanel(QWidget):
-    """Панель вывода с пейджинацией, сохранением, копированием и отделением."""
+    """Панель вывода с пейджинацией, иконками и placeholder."""
 
     def __init__(
         self,
@@ -63,7 +61,7 @@ class OutputPanel(QWidget):
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """Создает структуру панели и подключает действия."""
+        """Создает структуру панели."""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
@@ -72,9 +70,10 @@ class OutputPanel(QWidget):
 
         toolbar = QHBoxLayout()
 
-        self.save_button = QPushButton("Save...")
-        self.copy_button = QPushButton("Copy")
-        self.clear_button = QPushButton("Clear")
+        self.save_button = QPushButton("💾 Save...")
+        self.copy_button = QPushButton("📋 Copy")
+        self.clear_button = QPushButton("🗑 Clear")
+        self.clear_button.setProperty("danger", True)
         self.line_count_label = QLabel("Lines: 0")
 
         self._detach_btn = QPushButton("↗ Pop out")
@@ -93,21 +92,21 @@ class OutputPanel(QWidget):
 
         self.output_edit = QTextEdit()
         self.output_edit.setReadOnly(True)
+        self.output_edit.setPlaceholderText(_PLACEHOLDER)
 
         group_layout.addLayout(toolbar)
         group_layout.addWidget(self.output_edit)
         root.addWidget(group)
 
         self._detach_manager = DetachableWidgetManager(self, self._detach_btn)
-        self._update_line_count()
+        self._update_line_count(0)
 
     def set_text(self, text: str) -> None:
         """
-        Устанавливает plain text с применением пейджинации.
+        Устанавливает plain text с пейджинацией.
 
-        Первые _PAGE_SIZE строк отображаются сразу. При превышении
-        порога добавляется уведомление. Полный текст сохраняется
-        для операции Save.
+        При превышении порога строк добавляется уведомление.
+        Полный текст сохраняется для Save и Copy.
 
         Args:
             text: Текст для отображения.
@@ -132,25 +131,25 @@ class OutputPanel(QWidget):
 
     def set_html(self, html: str) -> None:
         """
-        Устанавливает HTML-содержимое в область вывода.
+        Устанавливает HTML-содержимое.
 
         Args:
             html: HTML-текст для отображения.
         """
-        self._full_text = self.output_edit.toPlainText()
         self.output_edit.setHtml(html)
+        text = self.output_edit.toPlainText()
+        self._full_text = text
         self._update_line_count()
 
     def append_text(self, text: str) -> None:
         """
-        Добавляет plain text в конец текущего содержимого.
+        Добавляет plain text в конец содержимого.
 
         Args:
             text: Текст для добавления.
         """
         clean = strip_rich_tags(text)
         current = self._full_text
-
         combined = f"{current}\n{clean}" if current else clean
         self.set_text(combined)
 
@@ -159,7 +158,7 @@ class OutputPanel(QWidget):
         Возвращает полное содержимое как plain text.
 
         Returns:
-            Полный текст без ограничений пейджинации.
+            Полный текст.
         """
         return self._full_text
 
@@ -174,8 +173,7 @@ class OutputPanel(QWidget):
         Обновляет счетчик строк.
 
         Args:
-            total: Общее количество строк полного текста.
-                   Если None, подсчитывается из текущего содержимого.
+            total: Количество строк. Если None, подсчитывается.
         """
         if total is None:
             text = self._full_text

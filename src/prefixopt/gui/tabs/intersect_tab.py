@@ -113,14 +113,15 @@ class IntersectTab(BaseOperationTab):
 
     def _init_ui(self) -> None:
         """Создает структуру вкладки с динамическими панелями источников."""
-        self.control_layout.addWidget(
-            QLabel(
-                "Find common prefixes across multiple sources.\n"
-                "• 1 source → self-check (internal overlaps)\n"
-                "• 2 sources → side-by-side comparison with coverage\n"
-                "• 3+ sources → presence matrix (prefixes in ≥2 sources)"
-            )
+        desc = QLabel(
+            "Find common prefixes across multiple sources.\n"
+            "1 source - self-check (internal overlaps)\n"
+            "2 sources - side-by-side comparison with coverage\n"
+            "3+ sources - presence matrix"
         )
+        desc.setProperty("role", "description")
+        desc.setWordWrap(True)
+        self.control_layout.addWidget(desc)
 
         scroll = QScrollArea()
         scroll_widget = QWidget()
@@ -140,11 +141,15 @@ class IntersectTab(BaseOperationTab):
         self.control_layout.addLayout(btn_layout)
 
         self.strict = QCheckBox("Strict mode")
+        self.strict.setToolTip(
+            "Reject prefixes with incorrect subnet masks"
+        )
         self.control_layout.addWidget(self.strict)
 
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Intersect")
         self.run_button.setProperty("primary", True)
+        self.run_button.setToolTip("Ctrl+R")
         run_row.addStretch()
         run_row.addWidget(self.run_button)
         self.control_layout.addLayout(run_row)

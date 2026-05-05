@@ -32,12 +32,13 @@ class DiffTab(BaseOperationTab):
 
     def _init_ui(self) -> None:
         """Создает элементы управления вкладки и подключает сигналы."""
-        self.control_layout.addWidget(
-            QLabel(
-                "Compare two sources and show added, removed "
-                "and unchanged prefixes."
-            )
+        desc = QLabel(
+            "Compare two sources and show added, removed "
+            "and unchanged prefixes."
         )
+        desc.setProperty("role", "description")
+        desc.setWordWrap(True)
+        self.control_layout.addWidget(desc)
 
         self.new_input = InputPanel(
             title="New source",
@@ -57,11 +58,21 @@ class DiffTab(BaseOperationTab):
 
         self.mode = QComboBox()
         self.mode.addItems(["changes", "added", "removed", "unchanged", "all"])
+        self.mode.setToolTip("Select which categories of changes to display")
 
         self.summary_only = QCheckBox("Summary only")
+        self.summary_only.setToolTip("Show only counts, not individual prefixes")
+
         self.ipv4_only = QCheckBox("IPv4 only")
+        self.ipv4_only.setToolTip("Process only IPv4 prefixes, skip IPv6")
+
         self.ipv6_only = QCheckBox("IPv6 only")
+        self.ipv6_only.setToolTip("Process only IPv6 prefixes, skip IPv4")
+
         self.strict = QCheckBox("Strict mode")
+        self.strict.setToolTip(
+            "Reject prefixes with incorrect subnet masks"
+        )
 
         form = QFormLayout()
         form.addRow("Mode:", self.mode)
@@ -76,6 +87,7 @@ class DiffTab(BaseOperationTab):
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Diff")
         self.run_button.setProperty("primary", True)
+        self.run_button.setToolTip("Ctrl+R")
         run_row.addStretch()
         run_row.addWidget(self.run_button)
 

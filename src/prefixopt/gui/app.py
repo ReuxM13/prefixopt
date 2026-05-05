@@ -1,7 +1,8 @@
 """
 Инициализация и запуск GUI-приложения.
 
-Определяет системную тему оформления и применяет глобальную стилизацию.
+Определяет системную тему оформления, применяет глобальную стилизацию
+и настраивает иконку приложения.
 """
 
 import logging
@@ -16,15 +17,53 @@ from .main_window import MainWindow
 logger = logging.getLogger("prefixopt.gui.app")
 
 
+def _set_windows_app_id() -> None:
+    """
+    Устанавливает AppUserModelID для Windows.
+
+    Должен вызываться до создания QApplication.
+    """
+    if sys.platform != "win32":
+        return
+
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "prefixopt.gui"
+        )
+    except Exception:
+        logger.exception("Failed to set Windows AppUserModelID")
+
+
+def _get_icon_path() -> Path | None:
+    """
+    Возвращает путь к иконке приложения.
+
+    На Windows приоритет отдается .ico, на остальных — .png.
+
+    Returns:
+        Путь к файлу иконки или None.
+    """
+    base_dir = Path(__file__).parent
+
+    if sys.platform == "win32":
+        ico_path = base_dir / "icon.ico"
+        if ico_path.exists():
+            return ico_path
+
+    png_path = base_dir / "icon.png"
+    if png_path.exists():
+        return png_path
+
+    return None
+
+
 def _is_dark_theme_windows() -> bool:
     """
     Определяет тёмную тему Windows через реестр.
 
-    Читает ключ AppsUseLightTheme из персонализации.
-    Значение 0 соответствует тёмной теме.
-
     Returns:
-        True если активна тёмная тема Windows.
+        True, если активна тёмная тема Windows.
     """
     try:
         import winreg
@@ -43,14 +82,11 @@ def _is_dark_theme(app: QApplication) -> bool:
     """
     Определяет текущую системную тему.
 
-    На Windows использует реестр, на остальных платформах
-    определяет тему по яркости фона палитры.
-
     Args:
         app: Экземпляр приложения.
 
     Returns:
-        True если активна тёмная тема.
+        True, если активна тёмная тема.
     """
     if sys.platform == "win32":
         return _is_dark_theme_windows()
@@ -62,7 +98,7 @@ def _is_dark_theme(app: QApplication) -> bool:
 
 def _apply_dark_palette(app: QApplication) -> None:
     """
-    Применяет тёмную палитру к приложению через Fusion.
+    Применяет тёмную палитру через Fusion.
 
     Args:
         app: Экземпляр приложения.
@@ -83,27 +119,15 @@ def _apply_dark_palette(app: QApplication) -> None:
     palette.setColor(QPalette.ColorRole.Link, QColor(0, 120, 212))
     palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 120, 212))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
-    palette.setColor(
-        QPalette.ColorGroup.Disabled,
-        QPalette.ColorRole.WindowText,
-        QColor(128, 128, 128),
-    )
-    palette.setColor(
-        QPalette.ColorGroup.Disabled,
-        QPalette.ColorRole.Text,
-        QColor(128, 128, 128),
-    )
-    palette.setColor(
-        QPalette.ColorGroup.Disabled,
-        QPalette.ColorRole.ButtonText,
-        QColor(128, 128, 128),
-    )
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(128, 128, 128))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(128, 128, 128))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(128, 128, 128))
     app.setPalette(palette)
 
 
 def _apply_light_palette(app: QApplication) -> None:
     """
-    Применяет светлую палитру через Fusion для единообразия стилей.
+    Применяет светлую палитру через Fusion.
 
     Args:
         app: Экземпляр приложения.
@@ -124,30 +148,18 @@ def _apply_light_palette(app: QApplication) -> None:
     palette.setColor(QPalette.ColorRole.Link, QColor(0, 120, 212))
     palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 120, 212))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
-    palette.setColor(
-        QPalette.ColorGroup.Disabled,
-        QPalette.ColorRole.WindowText,
-        QColor(160, 160, 160),
-    )
-    palette.setColor(
-        QPalette.ColorGroup.Disabled,
-        QPalette.ColorRole.Text,
-        QColor(160, 160, 160),
-    )
-    palette.setColor(
-        QPalette.ColorGroup.Disabled,
-        QPalette.ColorRole.ButtonText,
-        QColor(160, 160, 160),
-    )
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(160, 160, 160))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(160, 160, 160))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(160, 160, 160))
     app.setPalette(palette)
 
 
 def _build_stylesheet(dark: bool) -> str:
     """
-    Формирует глобальный stylesheet для приложения.
+    Формирует глобальный stylesheet.
 
     Args:
-        dark: True для тёмной темы, False для светлой.
+        dark: True для тёмной темы.
 
     Returns:
         CSS-строка.
@@ -164,10 +176,14 @@ def _build_stylesheet(dark: bool) -> str:
             "bg_button_primary": "#0e639c",
             "bg_button_primary_hover": "#1177bb",
             "bg_button_primary_pressed": "#0d5689",
+            "bg_button_danger": "#6b2020",
+            "bg_button_danger_hover": "#8b2a2a",
             "border": "#3f3f46",
             "border_focus": "#0078d4",
+            "border_input_inset": "#2a2a2a",
             "text": "#d4d4d4",
             "text_muted": "#808080",
+            "text_desc": "#9e9e9e",
             "text_button": "#ffffff",
             "text_group_title": "#9cdcfe",
             "scrollbar_bg": "#1e1e1e",
@@ -182,6 +198,8 @@ def _build_stylesheet(dark: bool) -> str:
             "tab_bg": "#2d2d30",
             "tab_hover_bg": "#383838",
             "tab_border": "#3f3f46",
+            "statusbar_bg": "#1e1e1e",
+            "statusbar_border": "#3f3f46",
         }
     else:
         c = {
@@ -195,10 +213,14 @@ def _build_stylesheet(dark: bool) -> str:
             "bg_button_primary": "#0078d4",
             "bg_button_primary_hover": "#1a88dd",
             "bg_button_primary_pressed": "#005a9e",
+            "bg_button_danger": "#d32f2f",
+            "bg_button_danger_hover": "#e53935",
             "border": "#d0d0d0",
             "border_focus": "#0078d4",
+            "border_input_inset": "#c0c0c0",
             "text": "#1e1e1e",
             "text_muted": "#6e6e6e",
+            "text_desc": "#888888",
             "text_button": "#1e1e1e",
             "text_group_title": "#0078d4",
             "scrollbar_bg": "#f0f0f0",
@@ -213,6 +235,8 @@ def _build_stylesheet(dark: bool) -> str:
             "tab_bg": "#f0f0f0",
             "tab_hover_bg": "#e5e5e5",
             "tab_border": "#d0d0d0",
+            "statusbar_bg": "#f5f5f5",
+            "statusbar_border": "#d0d0d0",
         }
 
     return f"""
@@ -224,6 +248,18 @@ def _build_stylesheet(dark: bool) -> str:
         QMainWindow {{
             background-color: {c["bg"]};
         }}
+
+        /* --- Statusbar --- */
+
+        QStatusBar {{
+            background-color: {c["statusbar_bg"]};
+            border-top: 1px solid {c["statusbar_border"]};
+            color: {c["text_muted"]};
+            font-size: 9pt;
+            padding: 2px 8px;
+        }}
+
+        /* --- Tabs --- */
 
         QTabWidget::pane {{
             border: 1px solid {c["tab_border"]};
@@ -253,6 +289,8 @@ def _build_stylesheet(dark: bool) -> str:
             color: {c["text"]};
         }}
 
+        /* --- Group boxes --- */
+
         QGroupBox {{
             background-color: {c["bg_group"]};
             border: 1px solid {c["border"]};
@@ -267,12 +305,26 @@ def _build_stylesheet(dark: bool) -> str:
             subcontrol-position: top left;
             padding: 2px 8px;
             color: {c["text_group_title"]};
+            font-size: 10pt;
+            font-weight: bold;
         }}
+
+        /* --- Description labels --- */
+
+        QLabel[role="description"] {{
+            color: {c["text_desc"]};
+            font-size: 9pt;
+            padding: 0 0 4px 0;
+        }}
+
+        /* --- Inputs with inset --- */
 
         QLineEdit, QPlainTextEdit, QTextEdit {{
             background-color: {c["bg_input"]};
             color: {c["text"]};
             border: 1px solid {c["border"]};
+            border-top: 1px solid {c["border_input_inset"]};
+            border-left: 1px solid {c["border_input_inset"]};
             border-radius: 4px;
             padding: 4px 6px;
             selection-background-color: {c["border_focus"]};
@@ -285,6 +337,8 @@ def _build_stylesheet(dark: bool) -> str:
         QLineEdit[readOnly="true"] {{
             background-color: {c["bg_alt"]};
         }}
+
+        /* --- Buttons --- */
 
         QPushButton {{
             background-color: {c["bg_button"]};
@@ -312,6 +366,9 @@ def _build_stylesheet(dark: bool) -> str:
             color: #ffffff;
             border: none;
             font-weight: bold;
+            font-size: 10pt;
+            padding: 7px 24px;
+            min-height: 28px;
         }}
 
         QPushButton[primary="true"]:hover {{
@@ -322,6 +379,18 @@ def _build_stylesheet(dark: bool) -> str:
             background-color: {c["bg_button_primary_pressed"]};
         }}
 
+        QPushButton[danger="true"] {{
+            background-color: {c["bg_button_danger"]};
+            color: #ffffff;
+            border: none;
+        }}
+
+        QPushButton[danger="true"]:hover {{
+            background-color: {c["bg_button_danger_hover"]};
+        }}
+
+        /* --- Checkboxes & Radio --- */
+
         QCheckBox, QRadioButton {{
             color: {c["text"]};
             spacing: 6px;
@@ -331,6 +400,8 @@ def _build_stylesheet(dark: bool) -> str:
             width: 16px;
             height: 16px;
         }}
+
+        /* --- ComboBox --- */
 
         QComboBox {{
             background-color: {c["bg_input"]};
@@ -358,6 +429,8 @@ def _build_stylesheet(dark: bool) -> str:
             selection-color: #ffffff;
         }}
 
+        /* --- SpinBox --- */
+
         QSpinBox {{
             background-color: {c["bg_input"]};
             color: {c["text"]};
@@ -370,9 +443,13 @@ def _build_stylesheet(dark: bool) -> str:
             border: 1px solid {c["border_focus"]};
         }}
 
+        /* --- Labels --- */
+
         QLabel {{
             color: {c["text"]};
         }}
+
+        /* --- Table --- */
 
         QTableWidget {{
             background-color: {c["bg_input"]};
@@ -389,16 +466,20 @@ def _build_stylesheet(dark: bool) -> str:
             font-weight: bold;
         }}
 
+        /* --- Splitter --- */
+
         QSplitter::handle {{
             background: {c["splitter"]};
+            border-radius: 2px;
         }}
 
         QSplitter::handle:vertical {{
-            height: 4px;
+            height: 6px;
+            image: none;
         }}
 
         QSplitter::handle:horizontal {{
-            width: 4px;
+            width: 6px;
         }}
 
         QSplitter::handle:hover {{
@@ -408,6 +489,8 @@ def _build_stylesheet(dark: bool) -> str:
         QSplitter::handle:pressed {{
             background: {c["splitter_pressed"]};
         }}
+
+        /* --- Progress bar --- */
 
         QProgressBar {{
             background-color: {c["progress_bg"]};
@@ -422,6 +505,8 @@ def _build_stylesheet(dark: bool) -> str:
             background-color: {c["progress_chunk"]};
             border-radius: 3px;
         }}
+
+        /* --- Scrollbar --- */
 
         QScrollBar:vertical {{
             background: {c["scrollbar_bg"]};
@@ -465,10 +550,14 @@ def _build_stylesheet(dark: bool) -> str:
             width: 0;
         }}
 
+        /* --- Scroll area --- */
+
         QScrollArea {{
             border: none;
             background-color: transparent;
         }}
+
+        /* --- Menu --- */
 
         QMenu {{
             background-color: {c["bg_input"]};
@@ -486,15 +575,17 @@ def _build_stylesheet(dark: bool) -> str:
 
 def run_gui() -> None:
     """Точка входа для запуска графического интерфейса."""
+    _set_windows_app_id()
+
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("prefixopt")
     app.setOrganizationName("prefixopt")
 
-    icon_path = Path(__file__).parent / "icon.png"
-
-    if icon_path.exists():
+    icon_path = _get_icon_path()
+    if icon_path is not None:
         app_icon = QIcon(str(icon_path))
         app.setWindowIcon(app_icon)
+        logger.info("Using application icon: %s", icon_path)
 
     dark = _is_dark_theme(app)
 
@@ -509,17 +600,8 @@ def run_gui() -> None:
 
     window = MainWindow()
 
-    if icon_path.exists():
+    if icon_path is not None:
         window.setWindowIcon(QIcon(str(icon_path)))
-
-    if sys.platform == "win32":
-        import ctypes
-        try:
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "prefixopt.gui"
-            )
-        except Exception:
-            pass
 
     window.show()
     app.exec()

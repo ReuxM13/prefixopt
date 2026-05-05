@@ -32,12 +32,13 @@ class MergeTab(BaseOperationTab):
 
     def _init_ui(self) -> None:
         """Создает структуру вкладки."""
-        self.control_layout.addWidget(
-            QLabel(
-                "Merge two sources. Supports keep-comments mode "
-                "and annotation for source 1."
-            )
+        desc = QLabel(
+            "Merge two sources. Supports keep-comments mode "
+            "and annotation for source 1."
         )
+        desc.setProperty("role", "description")
+        desc.setWordWrap(True)
+        self.control_layout.addWidget(desc)
 
         self.input_a = InputPanel(
             title="Source 1",
@@ -54,13 +55,29 @@ class MergeTab(BaseOperationTab):
 
         options = OptionsGroup("Merge options")
         self.keep_comments = QCheckBox("Keep comments")
+        self.keep_comments.setToolTip(
+            "Preserve line comments (#). Disables aggregation and CSV output"
+        )
+
         self.output_format = QComboBox()
         self.output_format.addItems(["list", "csv"])
+        self.output_format.setToolTip(
+            "Output format: one prefix per line or comma-separated"
+        )
+
         self.append_comment = QLineEdit()
         self.append_comment.setPlaceholderText(
             "Optional annotation for Source 1"
         )
+        self.append_comment.setToolTip(
+            "Tag added to Source 1 prefixes during merge "
+            "(requires Keep comments)"
+        )
+
         self.strict = QCheckBox("Strict mode")
+        self.strict.setToolTip(
+            "Reject prefixes with incorrect subnet masks"
+        )
 
         form = QFormLayout()
         form.addRow(self.keep_comments)
@@ -73,6 +90,7 @@ class MergeTab(BaseOperationTab):
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Merge")
         self.run_button.setProperty("primary", True)
+        self.run_button.setToolTip("Ctrl+R")
         run_row.addStretch()
         run_row.addWidget(self.run_button)
         self.control_layout.addLayout(run_row)

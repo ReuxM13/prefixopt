@@ -33,12 +33,13 @@ class FilterTab(BaseOperationTab):
 
     def _init_ui(self) -> None:
         """Создает структуру вкладки."""
-        self.control_layout.addWidget(
-            QLabel(
-                "Filter out private, loopback, multicast, reserved "
-                "and bogon prefixes."
-            )
+        desc = QLabel(
+            "Filter out private, loopback, multicast, reserved "
+            "and bogon prefixes."
         )
+        desc.setProperty("role", "description")
+        desc.setWordWrap(True)
+        self.control_layout.addWidget(desc)
 
         self.input_panel = InputPanel(
             title="Source",
@@ -49,18 +50,39 @@ class FilterTab(BaseOperationTab):
 
         options = OptionsGroup("Filter options")
         self.no_private = QCheckBox("Exclude private (RFC 1918, ULA)")
+        self.no_private.setToolTip(
+            "Remove RFC 1918 (IPv4) and ULA (IPv6) addresses"
+        )
+
         self.no_loopback = QCheckBox("Exclude loopback (127.0.0.0/8, ::1)")
+        self.no_loopback.setToolTip("Remove 127.0.0.0/8 and ::1/128")
+
         self.no_link_local = QCheckBox(
             "Exclude link-local (169.254.0.0/16, fe80::/10)"
         )
+        self.no_link_local.setToolTip("Remove 169.254.0.0/16 and fe80::/10")
+
         self.no_multicast = QCheckBox(
             "Exclude multicast (224.0.0.0/4, ff00::/8)"
         )
+        self.no_multicast.setToolTip("Remove 224.0.0.0/4 and ff00::/8")
+
         self.no_reserved = QCheckBox("Exclude reserved (IETF special use)")
+        self.no_reserved.setToolTip("Remove IETF special-use address blocks")
+
         self.bogons = QCheckBox("Bogons (all of the above)")
+        self.bogons.setToolTip("Remove all of the above categories at once")
+
         self.output_format = QComboBox()
         self.output_format.addItems(["list", "csv"])
+        self.output_format.setToolTip(
+            "Output format: one prefix per line or comma-separated"
+        )
+
         self.strict = QCheckBox("Strict mode")
+        self.strict.setToolTip(
+            "Reject prefixes with incorrect subnet masks"
+        )
 
         form = QFormLayout()
         form.addRow(self.no_private)
@@ -77,6 +99,7 @@ class FilterTab(BaseOperationTab):
         run_row = QHBoxLayout()
         self.run_button = QPushButton("Run Filter")
         self.run_button.setProperty("primary", True)
+        self.run_button.setToolTip("Ctrl+R")
         run_row.addStretch()
         run_row.addWidget(self.run_button)
         self.control_layout.addLayout(run_row)
