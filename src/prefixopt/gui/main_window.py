@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
         self._setup_statusbar()
         self._setup_shortcuts()
         self._restore_saved_state()
-        self._install_key_spy()
+        QTimer.singleShot(100, self._do_install_key_spy)
 
     def _setup_default_geometry(self) -> None:
         """Устанавливает размеры окна по умолчанию."""
@@ -110,7 +110,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int) -> None:
         """
-        Обновляет статусбар при смене вкладки.
+        Обновляет статусбар и переустанавливает перехватчик при смене вкладки.
 
         Args:
             index: Индекс выбранной вкладки.
@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
             f"{tab_name} — Ctrl+R to run, Ctrl+O to open, "
             f"Ctrl+S to save, Ctrl+Q to quit"
         )
+        QTimer.singleShot(50, self._do_install_key_spy)
 
     def _setup_shortcuts(self) -> None:
         """Настраивает глобальные горячие клавиши окна."""
@@ -282,22 +283,31 @@ class MainWindow(QMainWindow):
             if copy_button is not None and copy_button.isEnabled():
                 copy_button.click()
 
-    def _install_key_spy(self) -> None:
-        """Устанавливает перехватчик клавиатуры на виджеты ввода."""
-        QTimer.singleShot(100, self._do_install_key_spy)
-
     def _do_install_key_spy(self) -> None:
-        """Рекурсивно устанавливает eventFilter на дочерние виджеты ввода."""
+        """
+        Рекурсивно устанавливает eventFilter на все дочерние виджеты,
+        принимающие клавиатурный ввод.
+        """
         from PySide6.QtWidgets import (
+            QAbstractButton,
+            QAbstractScrollArea,
             QComboBox,
             QLineEdit,
             QPlainTextEdit,
             QSpinBox,
+            QTabBar,
             QTextEdit,
         )
 
         target_types = (
-            QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox
+            QLineEdit,
+            QPlainTextEdit,
+            QTextEdit,
+            QComboBox,
+            QSpinBox,
+            QTabBar,
+            QAbstractButton,
+            QAbstractScrollArea,
         )
 
         for widget in self.findChildren(QWidget):
