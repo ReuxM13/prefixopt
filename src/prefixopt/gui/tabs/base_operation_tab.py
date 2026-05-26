@@ -8,7 +8,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import QScrollArea, QSplitter, QVBoxLayout, QWidget
@@ -61,6 +61,28 @@ class BaseOperationTab(QWidget):
         self.progress_panel.cancel_button.clicked.connect(
             self._cancel_current_worker
         )
+
+    @property
+    def _error_display_widget(self) -> Union[OutputPanel, QWidget]:
+        """
+        Возвращает виджет для отображения сообщений об ошибках.
+
+        По умолчанию используется output_panel.
+        Переопределяется во вкладках, использующих SplitOutputPanel.
+
+        Returns:
+            Виджет для отображения ошибок.
+        """
+        return self.output_panel
+
+    def _on_error_cleanup(self) -> None:
+        """
+        Дополнительные действия после отображения ошибки.
+
+        Переопределяется во вкладках, требующих дополнительной очистки
+        (например, SplitOutputPanel).
+        """
+        pass
 
     def _setup_splitter(self, output_widget: QWidget) -> None:
         """
@@ -220,23 +242,36 @@ class BaseOperationTab(QWidget):
         Внутренние ошибки логируются в файл, пользователю показывается
         краткое уведомление.
 
+        Для вывода используется _error_display_widget, что позволяет
+        дочерним вкладкам (IntersectTab, CheckTab) переопределять
+        целевой виджет без дублирования логики.
+
         Args:
             error_msg: Полный traceback от worker'а.
         """
         user_message = self._extract_user_message(error_msg)
+        widget = self._error_display_widget
 
         if user_message:
-            self.output_panel.set_text(user_message)
+            if hasattr(widget, "set_report_text"):
+                widget.set_report_text(user_message)
+            else:
+                widget.set_text(user_message)
         else:
             logger.error(
                 "Unhandled error in background task:\n%s", error_msg
             )
             log_path = LOG_DIR / "prefixopt_gui.log"
-            self.output_panel.set_text(
+            msg = (
                 "An internal error occurred.\n"
                 f"Details have been written to:\n{log_path}"
             )
+            if hasattr(widget, "set_report_text"):
+                widget.set_report_text(msg)
+            else:
+                widget.set_text(msg)
 
+        self._on_error_cleanup()
         self.progress_panel.set_status("Error")
 
     @staticmethod
@@ -271,18 +306,6 @@ class BaseOperationTab(QWidget):
                 return last_line[len(prefix):].strip()
 
         return ""
-
-    def _show_placeholder(self, title: str) -> None:
-        """
-        Выводит временное сообщение-заглушку в панель результатов.
-
-        Args:
-            title: Название операции.
-        """
-        self.output_panel.set_text(
-            f"{title} is wired into the GUI shell.\n"
-            f"Business logic will be connected in the next implementation stage."
-        )
 
     def save_settings(self) -> dict:
         """
@@ -327,3 +350,23 @@ class BaseOperationTab(QWidget):
         """Инициирует копирование результата через панель вывода."""
         if hasattr(self.output_panel, "copy_button"):
             self.output_panel.copy_button.click()
+    def get_splitter_widget(self) -> Optional[QSplitter]:
+        """
+        Возвращает основной разделитель вкладки.
+
+        Returns:
+            QSplitter или None, если разделитель не настроен.
+        """
+        return getattr(self, "splitter", None)
+
+    def get_split_output_panel(self):
+        """
+        Возвращает SplitOutputPanel, если он используется.
+
+        По умолчанию возвращает None. Переопределяется во вкладках,
+        использующих двойную панель вывода (IntersectTab, CheckTab).
+
+        Returns:
+            SplitOutputPanel или None.
+        """
+        return None

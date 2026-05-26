@@ -3,6 +3,7 @@
 """
 
 from typing import Any
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -51,6 +52,14 @@ class MergeTab(BaseOperationTab):
             text_placeholder="Paste source 2 prefixes here...",
         )
         self.control_layout.addWidget(self.input_a)
+        swap_row = QHBoxLayout()
+        swap_row.addStretch()
+        self.swap_button = QPushButton("⇄ Swap")
+        self.swap_button.setToolTip("Swap sources (1 ↔ 2)")
+        self.swap_button.clicked.connect(self._swap_sources)
+        swap_row.addWidget(self.swap_button)
+        swap_row.addStretch()
+        self.control_layout.addLayout(swap_row)
         self.control_layout.addWidget(self.input_b)
 
         options = OptionsGroup("Merge options")
@@ -170,6 +179,15 @@ class MergeTab(BaseOperationTab):
         self.progress_panel.set_status(
             f"Done. Total prefixes: {result.total_count}"
         )
+
+
+    def _swap_sources(self) -> None:
+        """Меняет местами содержимое input_a и input_b."""
+        state_a = self.input_a.save_state()
+        state_b = self.input_b.save_state()
+        self.input_a.restore_state(state_b)
+        self.input_b.restore_state(state_a)
+        self._update_run_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла для первого незаполненного источника."""

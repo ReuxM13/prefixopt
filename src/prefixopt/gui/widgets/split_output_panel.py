@@ -147,3 +147,11 @@ class SplitOutputPanel(QWidget):
     def clear_output(self) -> None:
         """Очищает область вывода."""
         self.output_panel.clear()
+    def get_nested_splitter(self):
+        """
+        Возвращает внутренний разделитель между отчётом и выводом.
+
+        Returns:
+            QSplitter для сохранения/восстановления размеров.
+        """
+        return getattr(self, "splitter", None)

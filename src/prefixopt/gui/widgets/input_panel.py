@@ -185,3 +185,57 @@ class InputPanel(QWidget):
             event.acceptProposedAction()
         else:
             event.ignore()
+    def set_text_content(self, text: str) -> None:
+        """
+        Переключает панель в текстовый режим и устанавливает содержимое.
+
+        Args:
+            text: Текст для заполнения текстового поля.
+        """
+        self.text_mode_radio.setChecked(True)
+        self.text_edit.setPlainText(text)
+
+    def save_state(self) -> dict:
+        """
+        Сохраняет полное состояние панели (режим, файл, текст).
+
+        Returns:
+            Словарь с состоянием панели.
+        """
+        return {
+            "is_file_mode": self.file_mode_radio.isChecked(),
+            "selected_file": self._selected_file,
+            "file_path": self.file_path_edit.text(),
+            "text_content": self.text_edit.toPlainText(),
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """
+        Восстанавливает состояние панели без лишних сигналов.
+
+        Блокирует сигнал source_changed на время восстановления,
+        затем эмитит его однократно.
+
+        Args:
+            state: Словарь состояния, полученный из save_state().
+        """
+        try:
+            self.text_edit.blockSignals(True)
+            self.file_mode_radio.blockSignals(True)
+            self.text_mode_radio.blockSignals(True)
+
+            was_file_mode = state.get("is_file_mode", True)
+            self._selected_file = state.get("selected_file")
+            self.file_path_edit.setText(state.get("file_path", ""))
+            self.text_edit.setPlainText(state.get("text_content", ""))
+
+            if was_file_mode:
+                self.file_mode_radio.setChecked(True)
+            else:
+                self.text_mode_radio.setChecked(True)
+        finally:
+            self.text_edit.blockSignals(False)
+            self.file_mode_radio.blockSignals(False)
+            self.text_mode_radio.blockSignals(False)
+
+        self.source_changed.emit()

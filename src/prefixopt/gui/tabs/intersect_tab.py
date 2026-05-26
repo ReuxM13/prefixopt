@@ -12,6 +12,7 @@ from .. import LOG_DIR
 import logging
 from pathlib import Path
 
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -30,59 +31,110 @@ from ..widgets.input_panel import InputPanel
 from ..widgets.split_output_panel import SplitOutputPanel
 from ..workers import Worker
 
-from prefixopt.core.ip_utils import IPNet
+from ...core.ip_utils import IPNet
 
 logger = logging.getLogger("prefixopt.gui.tab.intersect")
 
 
-_REPORT_CSS = """
+def _build_report_css(dark: bool) -> str:
+    """
+    Формирует CSS для отчёта пересечений, адаптированный к текущей теме.
+
+    Args:
+        dark: True для тёмной темы.
+
+    Returns:
+        CSS-строка.
+    """
+    if dark:
+        c = {
+            "body_bg": "#1e1e1e",
+            "body_text": "#e0e0e0",
+            "h2": "#569cd6",
+            "h3": "#4ec9b0",
+            "th_bg": "#2d2d30",
+            "th_text": "#9cdcfe",
+            "td_border": "#3a3a3a",
+            "th_border": "#444",
+            "row_even": "#252526",
+            "row_odd": "#1e1e1e",
+            "yes": "#4ec9b0",
+            "no": "#666",
+            "exact": "#569cd6",
+            "partial": "#ce9178",
+            "warn": "#d7ba7d",
+            "stat_value": "#b5cea8",
+            "muted": "#808080",
+        }
+    else:
+        c = {
+            "body_bg": "#ffffff",
+            "body_text": "#1e1e1e",
+            "h2": "#0078d4",
+            "h3": "#107c10",
+            "th_bg": "#f0f0f0",
+            "th_text": "#0078d4",
+            "td_border": "#e0e0e0",
+            "th_border": "#d0d0d0",
+            "row_even": "#f9f9f9",
+            "row_odd": "#ffffff",
+            "yes": "#107c10",
+            "no": "#b0b0b0",
+            "exact": "#0078d4",
+            "partial": "#a31515",
+            "warn": "#d7ba7d",
+            "stat_value": "#107c10",
+            "muted": "#6e6e6e",
+        }
+
+    return f"""
 <style>
-    body {
+    body {{
         font-family: Consolas, "Courier New", monospace;
         font-size: 10pt;
-        color: #e0e0e0;
-        background-color: #1e1e1e;
+        color: {c["body_text"]};
+        background-color: {c["body_bg"]};
         margin: 6px;
-    }
-    h2 {
-        color: #569cd6;
+    }}
+    h2 {{
+        color: {c["h2"]};
         margin: 10px 0 6px 0;
         font-size: 11pt;
         border-bottom: 1px solid #444;
         padding-bottom: 4px;
-    }
-    h3 {
-        color: #4ec9b0;
+    }}
+    h3 {{
+        color: {c["h3"]};
         margin: 8px 0 4px 0;
         font-size: 10pt;
-    }
-    table {
+    }}
+    table {{
         border-collapse: collapse;
         margin: 4px 0 10px 0;
         width: 100%;
-    }
-    th {
-        background-color: #2d2d30;
-        color: #9cdcfe;
+    }}
+    th {{
+        background-color: {c["th_bg"]};
+        color: {c["th_text"]};
         text-align: left;
         padding: 4px 8px;
-        border: 1px solid #444;
+        border: 1px solid {c["th_border"]};
         font-weight: bold;
-    }
-    td {
+    }}
+    td {{
         padding: 3px 8px;
-        border: 1px solid #3a3a3a;
-    }
-    tr:nth-child(even) { background-color: #252526; }
-    tr:nth-child(odd) { background-color: #1e1e1e; }
-    .yes { color: #4ec9b0; font-weight: bold; }
-    .no { color: #666; }
-    .exact { color: #569cd6; }
-    .partial { color: #ce9178; }
-    .warn { color: #d7ba7d; }
-    .stat-value { color: #b5cea8; font-weight: bold; }
-    .muted { color: #808080; }
-    p { margin: 3px 0; }
+        border: 1px solid {c["td_border"]};
+    }}
+    tr:nth-child(even) {{ background-color: {c["row_even"]}; }}
+    tr:nth-child(odd) {{ background-color: {c["row_odd"]}; }}
+    .yes {{ color: {c["yes"]}; font-weight: bold; }}
+    .no {{ color: {c["no"]}; }}
+    .exact {{ color: {c["exact"]}; }}
+    .partial {{ color: {c["partial"]}; }}
+    .warn {{ color: {c["warn"]}; }}
+    .stat-value {{ color: {c["stat_value"]}; font-weight: bold; }}
+    .muted {{ color: {c["muted"]}; }}
+    p {{ margin: 3px 0; }}
 </style>
 """
 
@@ -110,6 +162,18 @@ class IntersectTab(BaseOperationTab):
         self._sources: list = []
         self._names: list[str] = []
         self._init_ui()
+
+    @property
+    def _error_display_widget(self) -> QWidget:
+        """Возвращает split_output для отображения ошибок."""
+        return self.split_output
+
+    def get_split_output_panel(self):
+        """Возвращает split_output для вкладок с двойной панелью."""
+
+    def _on_error_cleanup(self) -> None:
+        """Очищает область вывода после ошибки."""
+        self.split_output.set_output_text("")
 
     def _init_ui(self) -> None:
         """Создает структуру вкладки с динамическими панелями источников."""
@@ -168,6 +232,17 @@ class IntersectTab(BaseOperationTab):
 
         self.run_button.clicked.connect(self._run_intersect)
         self._update_run_state()
+
+    def _is_dark_theme(self) -> bool:
+        """
+        Определяет активную тему по яркости фона палитры.
+
+        Returns:
+            True для тёмной темы.
+        """
+        bg = self.palette().color(QPalette.ColorRole.Window)
+        luminance = 0.299 * bg.redF() + 0.587 * bg.greenF() + 0.114 * bg.blueF()
+        return luminance < 0.5
 
     def _update_panel_title(self, panel: InputPanel) -> None:
         """
@@ -293,7 +368,8 @@ class IntersectTab(BaseOperationTab):
         Returns:
             HTML-строка отчета.
         """
-        parts = [_REPORT_CSS]
+        css = _build_report_css(self._is_dark_theme())
+        parts = [css]
         parts.append(f"<h2>Self-Intersection Report: {report.name1}</h2>")
         parts.append(
             f'<p>Unique IPs: <span class="stat-value">'
@@ -339,7 +415,8 @@ class IntersectTab(BaseOperationTab):
         Returns:
             HTML-строка отчета.
         """
-        parts = [_REPORT_CSS]
+        css = _build_report_css(self._is_dark_theme())
+        parts = [css]
         parts.append("<h2>Intersection Report</h2>")
 
         parts.append(
@@ -429,7 +506,8 @@ class IntersectTab(BaseOperationTab):
         Returns:
             HTML-строка отчета.
         """
-        parts = [_REPORT_CSS]
+        css = _build_report_css(self._is_dark_theme())
+        parts = [css]
         parts.append("<h2>Multi-Intersection Report</h2>")
         parts.append(
             f'<p>Sources: <span class="stat-value">'
@@ -557,31 +635,6 @@ class IntersectTab(BaseOperationTab):
             f"Done. {len(report.filtered_prefixes)} shared prefixes, "
             f"pairwise analysis complete"
         )
-
-    def _on_error(self, error_msg: str) -> None:
-        """
-        Обрабатывает ошибку фоновой задачи.
-
-        Args:
-            error_msg: Полный traceback от worker'а.
-        """
-        user_message = self._extract_user_message(error_msg)
-
-        if user_message:
-            self.split_output.set_report_text(user_message)
-        else:
-            logger.error(
-                "Unhandled error in background task:\n%s", error_msg
-            )
-            log_path = LOG_DIR / "prefixopt_gui.log"
-            self.split_output.set_report_text(
-                "An internal error occurred.\n"
-                f"Details have been written to:\n{log_path}"
-            )
-
-        self.split_output.set_output_text("")
-        self.progress_panel.set_status("Error")
-
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла для первой незаполненной панели."""

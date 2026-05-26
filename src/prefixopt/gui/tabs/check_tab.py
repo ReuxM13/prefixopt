@@ -33,6 +33,19 @@ class CheckTab(BaseOperationTab):
         super().__init__()
         self._init_ui()
 
+    @property
+    def _error_display_widget(self) -> SplitOutputPanel:
+        """Возвращает split_output для отображения ошибок."""
+        return self.split_output
+
+    def _on_error_cleanup(self) -> None:
+        """Очищает область вывода после ошибки."""
+        self.split_output.set_output_text("")
+
+    def get_split_output_panel(self):
+        """Возвращает split_output для вкладок с двойной панелью."""
+        return self.split_output
+
     def _init_ui(self) -> None:
         """Создает структуру вкладки."""
         desc = QLabel(
@@ -210,30 +223,6 @@ class CheckTab(BaseOperationTab):
             )
             self.split_output.set_output_text("")
             self.progress_panel.set_status("Not found")
-
-    def _on_error(self, error_msg: str) -> None:
-        """
-        Обрабатывает ошибку фоновой задачи.
-
-        Args:
-            error_msg: Полный traceback от worker'а.
-        """
-        user_message = self._extract_user_message(error_msg)
-
-        if user_message:
-            self.split_output.set_report_text(user_message)
-        else:
-            logger.error(
-                "Unhandled error in background task:\n%s", error_msg
-            )
-            log_path = LOG_DIR / "prefixopt_gui.log"
-            self.split_output.set_report_text(
-                "An internal error occurred.\n"
-                f"Details have been written to:\n{log_path}"
-            )
-
-        self.split_output.set_output_text("")
-        self.progress_panel.set_status("Error")
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла."""

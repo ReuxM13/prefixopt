@@ -839,7 +839,7 @@ def test_cli_intersect_multi_files(tmp_path: Path) -> None:
     assert "192.168.1.0/24" not in result.stdout
     # Проверяем присутствие матрицы
     assert "Presence Matrix" in result.stdout
-    assert "✓" in result.stdout  # символ присутствия
+    assert "Y" in result.stdout  # символ присутствия
 
 
 def test_cli_intersect_multi_no_common(tmp_path: Path) -> None:
@@ -855,7 +855,7 @@ def test_cli_intersect_multi_no_common(tmp_path: Path) -> None:
     assert "No prefixes appear in at least 2 sources." in result.stdout
 
 
-def test_cli_intersect_multi_files(tmp_path: Path) -> None:
+def test_cli_intersect_multi_partial_coverage(tmp_path: Path) -> None:
     """Проверка трёх файлов: общий для двух из трёх префикс попадает в отчёт."""
     f1 = tmp_path / "a.txt"
     f1.write_text("10.0.0.0/24\n192.168.1.0/24\n")

@@ -24,6 +24,7 @@ from ..core.operations.diff import calculate_diff
 from ..core.operations.sorter import sort_networks
 from ..core.operations.subnetter import split_network
 from ..core.operations.subtractor import subtract_networks
+from ..core.operations.overlap import find_two_list_overlaps, find_self_overlaps
 from ..core.pipeline import process_prefixes
 from ..data.file_reader import (
     extract_prefixes_from_text,
@@ -497,13 +498,13 @@ def run_intersect(
 
     if self_mode:
         common: set[IPNet] = set()
-        raw_overlaps = _find_self_overlaps(sorted1)
+        raw_overlaps = find_self_overlaps(sorted1)
     else:
         set1 = set(list1)
         set2 = set(list2)
         common = set1.intersection(set2)
         sorted2 = sort_networks(list2)
-        raw_overlaps = _find_two_list_overlaps(sorted1, sorted2)
+        raw_overlaps = find_two_list_overlaps(sorted1, sorted2)
 
     partial_overlaps: List[Tuple[IPNet, IPNet, str, str]] = []
 
@@ -561,79 +562,6 @@ def run_intersect(
         name2=name2,
         all_results=all_results,
     )
-
-
-def _find_two_list_overlaps(
-    sorted1: List[IPNet],
-    sorted2: List[IPNet],
-) -> List[Tuple[IPNet, IPNet]]:
-    """
-    Линейный поиск пересечений между двумя отсортированными списками.
-
-    Использует two-pointer алгоритм по диапазонам адресов.
-    """
-    overlaps: List[Tuple[IPNet, IPNet]] = []
-    i, j = 0, 0
-    len1, len2 = len(sorted1), len(sorted2)
-
-    while i < len1 and j < len2:
-        n1, n2 = sorted1[i], sorted2[j]
-
-        if n1.version < n2.version:
-            i += 1
-            continue
-        if n1.version > n2.version:
-            j += 1
-            continue
-
-        s1 = int(n1.network_address)
-        e1 = int(n1.broadcast_address)
-        s2 = int(n2.network_address)
-        e2 = int(n2.broadcast_address)
-
-        if max(s1, s2) <= min(e1, e2):
-            overlaps.append((n1, n2))
-            if e1 < e2:
-                i += 1
-            elif e2 < e1:
-                j += 1
-            else:
-                i += 1
-                j += 1
-        elif e1 < s2:
-            i += 1
-        else:
-            j += 1
-
-    return overlaps
-
-
-def _find_self_overlaps(
-    sorted_list: List[IPNet],
-) -> List[Tuple[IPNet, IPNet]]:
-    """
-    Поиск пересечений внутри одного отсортированного списка.
-
-    Для каждого элемента проверяются последующие до выхода за broadcast-границу.
-    """
-    overlaps: List[Tuple[IPNet, IPNet]] = []
-    length = len(sorted_list)
-
-    for i in range(length):
-        net_i = sorted_list[i]
-        end_i = int(net_i.broadcast_address)
-
-        for j in range(i + 1, length):
-            net_j = sorted_list[j]
-
-            if net_i.version != net_j.version:
-                break
-            if int(net_j.network_address) > end_i:
-                break
-
-            overlaps.append((net_i, net_j))
-
-    return overlaps
 
 
 def run_diff(
@@ -927,13 +855,15 @@ def run_multi_intersect(
             freq[key] = freq.get(key, 0) + 1
 
     sets = [set(lst) for lst in lists]
+    # Предвычисляем строковые представления множеств для O(N) поиска
+    str_sets = [{str(n) for n in s} for s in sets]
 
     presence_map: Dict[str, List[int]] = {}
     for key in freq:
         presence_map[key] = [
             idx
             for idx in range(num_sources)
-            if key in {str(n) for n in sets[idx]}
+            if key in str_sets[idx]
         ]
 
     all_prefixes = [ipaddress.ip_network(key, strict=False) for key in freq]
@@ -968,7 +898,7 @@ def run_multi_intersect(
 
     for i in range(num_sources):
         for j in range(i + 1, num_sources):
-            raw_overlaps = _find_two_list_overlaps(
+            raw_overlaps = find_two_list_overlaps(
                 sorted_lists[i], sorted_lists[j]
             )
             for net1, net2 in raw_overlaps:

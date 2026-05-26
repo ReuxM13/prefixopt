@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from .settings_manager import SettingsManager
+from .tabs.base_operation_tab import BaseOperationTab
 from .tabs.check_tab import CheckTab
 from .tabs.diff_tab import DiffTab
 from .tabs.exclude_tab import ExcludeTab
@@ -47,7 +48,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(640, 480)
 
         self._settings = SettingsManager.instance()
-        self._tab_widgets: dict[str, QWidget] = {}
+        self._tab_widgets: dict[str, BaseOperationTab] = {}
         self._splitters_restored = False
 
         self._key_buffer: list[str] = []
@@ -185,16 +186,16 @@ class MainWindow(QMainWindow):
     def _save_splitters(self) -> None:
         """Сохраняет размеры сплиттеров всех вкладок."""
         for key, tab in self._tab_widgets.items():
-            main_splitter = getattr(tab, "splitter", None)
+            main_splitter = tab.get_splitter_widget()
             if main_splitter is not None:
                 self._settings.save_splitter_sizes(
                     f"{key}/main",
                     main_splitter.sizes(),
                 )
 
-            split_output = getattr(tab, "split_output", None)
+            split_output = tab.get_split_output_panel()
             if split_output is not None:
-                nested_splitter = getattr(split_output, "splitter", None)
+                nested_splitter = split_output.get_nested_splitter()
                 if nested_splitter is not None:
                     self._settings.save_splitter_sizes(
                         f"{key}/nested",
@@ -204,15 +205,15 @@ class MainWindow(QMainWindow):
     def _restore_splitters(self) -> None:
         """Восстанавливает размеры сплиттеров всех вкладок."""
         for key, tab in self._tab_widgets.items():
-            main_splitter = getattr(tab, "splitter", None)
+            main_splitter = tab.get_splitter_widget()
             if main_splitter is not None:
                 sizes = self._settings.load_splitter_sizes(f"{key}/main")
                 if len(sizes) >= 2:
                     main_splitter.setSizes(sizes)
 
-            split_output = getattr(tab, "split_output", None)
+            split_output = tab.get_split_output_panel()
             if split_output is not None:
-                nested_splitter = getattr(split_output, "splitter", None)
+                nested_splitter = split_output.get_nested_splitter()
                 if nested_splitter is not None:
                     sizes = self._settings.load_splitter_sizes(
                         f"{key}/nested"
@@ -220,32 +221,17 @@ class MainWindow(QMainWindow):
                     if len(sizes) >= 2:
                         nested_splitter.setSizes(sizes)
 
-    def _current_tab(self) -> Optional[QWidget]:
+    def _current_tab(self) -> Optional[BaseOperationTab]:
         """
         Возвращает активную вкладку.
 
         Returns:
             Текущий виджет вкладки или None.
         """
-        return self.tabs.currentWidget()
-
-    def _get_output_panel(self, tab: QWidget) -> Optional[QWidget]:
-        """
-        Возвращает панель вывода для вкладки.
-
-        Args:
-            tab: Виджет вкладки.
-
-        Returns:
-            Панель вывода или None.
-        """
-        split_output = getattr(tab, "split_output", None)
-        if split_output is not None and hasattr(
-            split_output, "get_output_panel"
-        ):
-            return split_output.get_output_panel()
-
-        return getattr(tab, "output_panel", None)
+        widget = self.tabs.currentWidget()
+        if isinstance(widget, BaseOperationTab):
+            return widget
+        return None
 
     def _dispatch_tab_action(self, action_type: str) -> None:
         """
@@ -259,29 +245,19 @@ class MainWindow(QMainWindow):
             return
 
         if action_type == "browse":
-            method = getattr(tab, "trigger_open", None)
-            if callable(method):
-                method()
-                return
-
-        if action_type == "run":
-            method = getattr(tab, "trigger_run", None)
-            if callable(method):
-                method()
-                return
-
-        output_panel = self._get_output_panel(tab)
-
-        if action_type == "save" and output_panel is not None:
-            save_button = getattr(output_panel, "save_button", None)
-            if save_button is not None and save_button.isEnabled():
-                save_button.click()
+            tab.trigger_open()
             return
 
-        if action_type == "copy" and output_panel is not None:
-            copy_button = getattr(output_panel, "copy_button", None)
-            if copy_button is not None and copy_button.isEnabled():
-                copy_button.click()
+        if action_type == "run":
+            tab.trigger_run()
+            return
+
+        if action_type == "save":
+            tab.trigger_save()
+            return
+
+        if action_type == "copy":
+            tab.trigger_copy()
 
     def _do_install_key_spy(self) -> None:
         """
@@ -410,8 +386,7 @@ class MainWindow(QMainWindow):
             event: Событие закрытия.
         """
         for widget in self._tab_widgets.values():
-            if hasattr(widget, "_graceful_shutdown"):
-                widget._graceful_shutdown()
+            widget._graceful_shutdown()
 
         self._save_state()
         super().closeEvent(event)

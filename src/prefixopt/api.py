@@ -57,54 +57,40 @@ def load(source: InputSource) -> Iterator[IPNet]:
     Raises:
         ValueError: Если тип источника не поддерживается.
     """
-    # 1. Если передан объект Path — проверяем наличие файла
     if isinstance(source, Path):
         if source.exists() and source.is_file():
-            # show_progress=False отключает визуальный шум (UI)
             yield from read_networks(source, show_progress=False)
             return
 
-    # 2. Если передана строка
     if isinstance(source, str):
         try:
-            # Пытаемся понять, путь ли это
             path_obj = Path(source)
-            # Ограничение длины < 255 — защита от передачи огромного текста в конструктор Path
             if len(source) < 255 and path_obj.exists() and path_obj.is_file():
                 yield from read_networks(path_obj, show_progress=False)
                 return
         except OSError:
-            # Если ОС ругается на недопустимые символы в пути — значит это просто текст
             pass
-        
-        # Если это не файл, считаем, что это сырой текст (CSV, JSON-фрагмент, лог)
+
         yield from extract_prefixes_from_text(source)
         return
 
-    # 3. Если передан итерируемый объект (список, кортеж, генератор)
     if isinstance(source, Iterable) and not isinstance(source, bytes):
         for item in source:
             if isinstance(item, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
                 yield item
             else:
-                # Если элементы списка — строки, извлекаем из них IP
                 yield from extract_prefixes_from_text(str(item))
         return
-    
+
     raise ValueError(f"Unsupported input type: {type(source)}")
 
 
 def _optimize_with_comments(source: InputSource) -> List[Tuple[IPNet, str]]:
     """
     Внутренняя функция для обработки списков с сохранением комментариев.
-    
-    Используется, когда нельзя применять агрегацию (склейку сетей), так как
-    это уничтожило бы привязку комментария к конкретной подсети.
-    Выполняет только дедупликацию и сортировку.
     """
     data_iter: Iterator[Tuple[IPNet, str]]
-    
-    # Пытаемся использовать специальный читатель, если это файл
+
     is_file = False
     if isinstance(source, Path) and source.exists():
         is_file = True
@@ -117,34 +103,26 @@ def _optimize_with_comments(source: InputSource) -> List[Tuple[IPNet, str]]:
             pass
 
     if is_file:
-        # Читаем файл построчно, сохраняя комментарии после символа #
         path_ref = Path(str(source))
         data_iter = read_prefixes_with_comments(path_ref)
     else:
-        # Если источник не файл (например, список строк), мы не можем гарантированно
-        # восстановить комментарии. Возвращаем пустые строки вместо комментов.
         data_iter = ((net, "") for net in load(source))
 
-    # Дедупликация через словарь. Ключ - строковый IP.
-    # Это позволяет убрать полные дубликаты.
     unique_map: Dict[str, str] = {}
-    
+
     for ip, comment in data_iter:
         ip_str = str(ip)
         if ip_str not in unique_map:
             unique_map[ip_str] = comment
         else:
-            # Если дубликат имеет комментарий, а оригинал нет — обновляем
             if not unique_map[ip_str] and comment:
                 unique_map[ip_str] = comment
 
-    # Превращаем словарь обратно в список кортежей
     merged_list = []
     for ip_str_key, comm in unique_map.items():
         net_obj = ipaddress.ip_network(ip_str_key, strict=False)
         merged_list.append((net_obj, comm))
 
-    # Сортировка Broadest First (Версия -> IP -> Маска)
     merged_list.sort(key=lambda item: (
         item[0].version, 
         int(item[0].network_address), 
@@ -169,24 +147,21 @@ def optimize(
         source: Входные данные.
         ipv4_only: Оставить только IPv4.
         ipv6_only: Оставить только IPv6.
-        remove_nested: Удалять вложенные подсети (например, 10.1.1.1/32 внутри 10.0.0.0/8).
-        aggregate: Объединять смежные сети (CIDR summarization).
+        remove_nested: Удалять вложенные подсети.
+        aggregate: Объединять смежные сети.
         bogons: Удалить частные, локальные и зарезервированные сети.
-        keep_comments: Если True, возвращает список кортежей (IP, Comment). 
-                       При этом отключается агрегация и удаление вложенных.
+        keep_comments: Если True, возвращает список кортежей (IP, Comment).
 
     Returns:
-        List[IPNet]: Список оптимизированных сетей (по умолчанию).
-        List[Tuple[IPNet, str]]: Если включен keep_comments.
+        List[IPNet] или List[Tuple[IPNet, str]].
     """
     if keep_comments:
         return _optimize_with_comments(source)
 
-    # Стандартный путь через Pipeline
     iterator = load(source)
     result_iter = process_prefixes(
         iterator,
-        sort=True, # Для API всегда сортируем результат
+        sort=True,
         remove_nested=remove_nested,
         aggregate=aggregate,
         ipv4_only=ipv4_only,
@@ -203,22 +178,19 @@ def add(
 ) -> Union[List[IPNet], List[Tuple[IPNet, str]]]:
     """
     Добавляет новый префикс в список и возвращает обновленный набор данных.
-    
+
     Args:
         source: Исходный список.
-        new_prefix: Строка с новым префиксом (например, "10.0.0.1/32").
-        keep_comments: Сохранять ли комментарии (см. optimize).
+        new_prefix: Строка с новым префиксом.
+        keep_comments: Сохранять ли комментарии.
     """
     net = normalize_prefix(new_prefix)
-    
+
     if keep_comments:
         data = _optimize_with_comments(source)
-        # Проверяем, есть ли уже такой IP в списке
         exists = any(item[0] == net for item in data)
         if not exists:
-            # Добавляем новый IP с авто-комментарием
             data.append((net, f"# Added: {new_prefix}"))
-            # Пересортируем список
             data.sort(key=lambda item: (
                 item[0].version, 
                 int(item[0].network_address), 
@@ -226,11 +198,10 @@ def add(
             ))
         return data
 
-    # Стандартный путь
     data_list = list(load(source))
     if net not in data_list:
         data_list.append(net)
-        
+
     return optimize(data_list)
 
 
@@ -241,14 +212,19 @@ def filter(
 ) -> List[IPNet]:
     """
     Фильтрует список сетей по критериям (без агрегации).
-    
-    Используется для очистки списка от "мусорных" адресов (private, multicast и т.д.),
-    сохраняя при этом структуру исходных сетей.
+
+    Args:
+        source: Входные данные.
+        exclude_private: Удалить RFC 1918 / ULA.
+        bogons: Удалить все специальные сети.
+
+    Returns:
+        Отфильтрованный список.
     """
     iterator = load(source)
     result_iter = process_prefixes(
         iterator,
-        sort=False, # Фильтр старается сохранить исходный порядок
+        sort=False,
         remove_nested=False,
         aggregate=False,
         exclude_private=exclude_private,
@@ -264,38 +240,33 @@ def merge(
 ) -> Union[List[IPNet], List[Tuple[IPNet, str]]]:
     """
     Объединяет несколько источников данных в один оптимизированный список.
-    
+
     Пример:
         api.merge("list1.txt", ["1.1.1.1"], "list2.csv")
         api.merge("conf1.txt", "conf2.txt", keep_comments=True)
-        
+
     Args:
-        *sources: Произвольное количество источников (пути или списки).
-        keep_comments: Сохранять комментарии (отключает агрегацию).
+        *sources: Произвольное количество источников.
+        keep_comments: Сохранять комментарии.
     """
     if keep_comments:
-        # 1. Загружаем все источники с комментариями по отдельности
         all_data: List[Tuple[IPNet, str]] = []
         for src in sources:
             all_data.extend(_optimize_with_comments(src))
-            
-        # 2. Глобальная дедупликация
+
         unique_map: Dict[str, str] = {}
         for ip, comment in all_data:
             ip_str = str(ip)
-            # Если IP уже был, обновляем коммент, только если старый был пуст, а новый нет
             if ip_str not in unique_map:
                 unique_map[ip_str] = comment
             elif not unique_map[ip_str] and comment:
                 unique_map[ip_str] = comment
-                
-        # 3. Конвертация обратно
+
         merged_list = []
         for ip_str_key, comm in unique_map.items():
             net_obj = ipaddress.ip_network(ip_str_key, strict=False)
             merged_list.append((net_obj, comm))
-            
-        # 4. Глобальная сортировка
+
         merged_list.sort(key=lambda item: (
             item[0].version, 
             int(item[0].network_address), 
@@ -304,7 +275,6 @@ def merge(
         return merged_list
 
     else:
-        # Стандартный путь: объединяем все потоки и прогоняем через пайплайн
         combined_iter = itertools.chain.from_iterable(load(src) for src in sources)
         result_iter = process_prefixes(
             combined_iter,
@@ -315,34 +285,105 @@ def merge(
         return list(result_iter)
 
 
+def _find_two_list_overlaps(
+    sorted_a: List[IPNet],
+    sorted_b: List[IPNet],
+) -> List[Tuple[IPNet, IPNet]]:
+    """
+    Линейный поиск пересечений между двумя отсортированными списками.
+
+    Использует two-pointer алгоритм по диапазонам адресов.
+    Сложность O(N + M), где N и M — размеры списков.
+    """
+    overlaps: List[Tuple[IPNet, IPNet]] = []
+    i, j = 0, 0
+    len_a, len_b = len(sorted_a), len(sorted_b)
+
+    while i < len_a and j < len_b:
+        n1, n2 = sorted_a[i], sorted_b[j]
+
+        if n1.version < n2.version:
+            i += 1
+            continue
+        if n1.version > n2.version:
+            j += 1
+            continue
+
+        s1 = int(n1.network_address)
+        e1 = int(n1.broadcast_address)
+        s2 = int(n2.network_address)
+        e2 = int(n2.broadcast_address)
+
+        if max(s1, s2) <= min(e1, e2):
+            overlaps.append((n1, n2))
+            if e1 < e2:
+                i += 1
+            elif e2 < e1:
+                j += 1
+            else:
+                i += 1
+                j += 1
+        elif e1 < s2:
+            i += 1
+        else:
+            j += 1
+
+    return overlaps
+
+
 def intersect(source_a: InputSource, source_b: InputSource) -> List[IPNet]:
     """
     Находит пересечение двух списков.
-    """
-    set_a = set(load(source_a))
-    set_b = set(load(source_b))
-    
-    common = set_a.intersection(set_b)
-    
-    list_a = list(set_a)
-    list_b = list(set_b)
-    
-    for net1 in list_a:
-        for net2 in list_b:
-            if net1 in common or net2 in common:
-                continue
-            
-            if net1.overlaps(net2):
-                if net1.version == net2.version:
-                    common.add(net1)
-                    common.add(net2)
 
-    return optimize(list(common)) # type: ignore
+    Использует двух-pointer алгоритм для поиска точных совпадений
+    и частичных перекрытий за линейное время.
+
+    Args:
+        source_a: Первый источник.
+        source_b: Второй источник.
+
+    Returns:
+        Оптимизированный список пересекающихся сетей.
+    """
+    list_a = list(load(source_a))
+    list_b = list(load(source_b))
+
+    sorted_a = sorted(
+        list_a,
+        key=lambda n: (n.version, int(n.network_address), n.prefixlen),
+    )
+    sorted_b = sorted(
+        list_b,
+        key=lambda n: (n.version, int(n.network_address), n.prefixlen),
+    )
+
+    set_a = set(list_a)
+    set_b = set(list_b)
+    common = set_a.intersection(set_b)
+
+    raw_overlaps = _find_two_list_overlaps(sorted_a, sorted_b)
+
+    for net1, net2 in raw_overlaps:
+        if net1 == net2:
+            continue
+        if net1 in common or net2 in common:
+            continue
+        common.add(net1)
+        common.add(net2)
+
+    return optimize(list(common))
 
 
 def split(target: str, length: int) -> List[IPNet]:
     """
     Разбивает сеть на подсети заданной длины (CIDR).
+
+    Args:
+        target: Целевая сеть.
+        length: Длина префикса для разбиения.
+
+    Returns:
+        Список подсетей.
     """
     net = normalize_prefix(target)
     return split_network(net, length)
@@ -351,6 +392,13 @@ def split(target: str, length: int) -> List[IPNet]:
 def exclude(source: InputSource, target: InputSource) -> List[IPNet]:
     """
     Вычитает сети (target) из источника (source).
+
+    Args:
+        source: Исходный список.
+        target: Список для исключения.
+
+    Returns:
+        Результирующий список.
     """
     src_iter = load(source)
     dst_iter = load(target)
@@ -397,6 +445,12 @@ def diff(
 def stats(source: InputSource) -> Dict[str, Union[int, float]]:
     """
     Возвращает словарь со статистикой.
+
+    Args:
+        source: Входные данные.
+
+    Returns:
+        Словарь с метриками.
     """
     data_list = list(load(source))
     return get_prefix_statistics(data_list)
@@ -405,28 +459,35 @@ def stats(source: InputSource) -> Dict[str, Union[int, float]]:
 def check(target: str, source: InputSource) -> List[IPNet]:
     """
     Проверяет, входит ли target (IP или сеть) в список source.
+
+    Args:
+        target: IP-адрес или префикс для проверки.
+        source: Список для поиска.
+
+    Returns:
+        Список покрывающих сетей.
     """
     try:
         check_item = ipaddress.ip_network(target, strict=False)
     except ValueError:
         try:
-            check_item = ipaddress.ip_address(target) # type: ignore
+            check_item = ipaddress.ip_address(target)
         except ValueError:
             return []
 
     containing = []
-    
+
     for net in load(source):
         if net.version != check_item.version:
             continue
-        
+
         if isinstance(check_item, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
             if check_item in net:
                 containing.append(net)
         else: 
             if is_subnet_of(check_item, net):
                 containing.append(net)
-    
+
     return containing
 
 
@@ -438,5 +499,4 @@ def merge_with_comments(
     Устаревшая функция для совместимости.
     Использует новую реализацию merge с флагом keep_comments.
     """
-    # Результат merge с keep_comments=True гарантированно List[Tuple]
-    return merge(file1, file2, keep_comments=True) # type: ignore
+    return merge(file1, file2, keep_comments=True)

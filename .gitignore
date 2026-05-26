@@ -1,7 +1,11 @@
+# --- Python ---
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+*.db
 
+# --- Packaging ---
 .Python
 build/
 develop-eggs/
@@ -18,26 +22,45 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-log/
 
+# --- Virtual environments ---
 venv/
+.env/
 env/
 ENV/
 
+# --- Testing & coverage ---
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+.mypy_cache/
+.ruff_cache/
 
+# --- IDE & editors ---
 .idea/
 .vscode/
 *.swp
+*.swo
+*~
+*.bak
 
+# --- OS metadata ---
+.DS_Store
 Thumbs.db
 Desktop.ini
+$RECYCLE.BIN/
 
+# --- Archives ---
 *.rar
 *.zip
 *.7z
+*.tar.gz
+*.tgz
 
+# --- Logs ---
+log/
+*.log
+
+# --- Project-specific ---
 lists/
-prefixopt.egg-info/

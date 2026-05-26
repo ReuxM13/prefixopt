@@ -3,6 +3,7 @@
 """
 
 from typing import Any
+from pathlib import Path
 
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
@@ -52,6 +53,14 @@ class DiffTab(BaseOperationTab):
         )
 
         self.control_layout.addWidget(self.new_input)
+        swap_row = QHBoxLayout()
+        swap_row.addStretch()
+        self.swap_button = QPushButton("⇄ Swap")
+        self.swap_button.setToolTip("Swap sources (New ↔ Old)")
+        self.swap_button.clicked.connect(self._swap_sources)
+        swap_row.addWidget(self.swap_button)
+        swap_row.addStretch()
+        self.control_layout.addLayout(swap_row)
         self.control_layout.addWidget(self.old_input)
 
         options = OptionsGroup("Diff options")
@@ -253,6 +262,14 @@ class DiffTab(BaseOperationTab):
             f"Removed: {len(result.removed)}, "
             f"Unchanged: {len(result.unchanged)}"
         )
+
+    def _swap_sources(self) -> None:
+        """Меняет местами содержимое new_input и old_input."""
+        state_new = self.new_input.save_state()
+        state_old = self.old_input.save_state()
+        self.new_input.restore_state(state_old)
+        self.old_input.restore_state(state_new)
+        self._update_state()
 
     def trigger_open(self) -> None:
         """Открывает диалог выбора файла для первого незаполненного источника."""

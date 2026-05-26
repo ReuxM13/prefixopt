@@ -28,6 +28,7 @@ from ..core.pipeline import process_prefixes
 from ..core.operations.sorter import sort_networks
 from ..core.ip_utils import IPNet
 from ..core.ip_counter import count_unique_ips
+from ..core.operations.overlap import find_two_list_overlaps, find_self_overlaps
 
 
 # ===================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====================
@@ -66,7 +67,7 @@ def _comment_from_text(text: Optional[str]) -> str:
     return f"# {cleaned}"
 
 
-def _find_overlaps_linear(
+def find_two_list_overlaps(
     sorted_list1: List[IPNet],
     sorted_list2: List[IPNet],
 ) -> List[Tuple[IPNet, IPNet]]:
@@ -104,7 +105,7 @@ def _find_overlaps_linear(
     return overlaps
 
 
-def _find_self_overlaps(sorted_list: List[IPNet]) -> List[Tuple[IPNet, IPNet]]:
+def find_self_overlaps(sorted_list: List[IPNet]) -> List[Tuple[IPNet, IPNet]]:
     overlaps: List[Tuple[IPNet, IPNet]] = []
     length = len(sorted_list)
     for i in range(length):
@@ -252,7 +253,7 @@ def intersect(
             sole_name = names[0]
             volume = count_unique_ips(sole_list)
             sorted_lst = sort_networks(sole_list)
-            raw_overlaps = _find_self_overlaps(sorted_lst)
+            raw_overlaps = find_self_overlaps(sorted_lst)
             partial_overlaps = []
             for net1, net2 in raw_overlaps:
                 if net1 == net2:
@@ -296,7 +297,7 @@ def intersect(
             common = set1.intersection(set2)
             sorted1 = sort_networks(list1)
             sorted2 = sort_networks(list2)
-            raw_overlaps = _find_overlaps_linear(sorted1, sorted2)
+            raw_overlaps = find_two_list_overlaps(sorted1, sorted2)
 
             partial_overlaps: List[Tuple[IPNet, IPNet, str, str]] = []
             for net1, net2 in raw_overlaps:
@@ -434,7 +435,7 @@ def intersect(
         all_pairs_partial: List[Tuple[IPNet, IPNet, str, str]] = []
         for i in range(num_files):
             for j in range(i + 1, num_files):
-                raw = _find_overlaps_linear(sorted_opt_lists[i], sorted_opt_lists[j])
+                raw = find_two_list_overlaps(sorted_opt_lists[i], sorted_opt_lists[j])
                 for net1, net2 in raw:
                     if net1 == net2:
                         continue

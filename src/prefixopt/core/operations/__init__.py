@@ -5,3 +5,4 @@ from .filter import filter_special
 from .subnetter import split_network
 from .diff import calculate_diff
 from .subtractor import subtract_networks
+from .overlap import find_two_list_overlaps, find_self_overlaps
