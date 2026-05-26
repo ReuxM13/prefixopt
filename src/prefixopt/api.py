@@ -30,6 +30,7 @@ from .core.pipeline import process_prefixes
 from .core.operations.subtractor import subtract_networks
 from .core.operations.diff import calculate_diff
 from .core.operations.subnetter import split_network
+from .core.operations.overlap import find_two_list_overlaps
 from .core.ip_counter import get_prefix_statistics
 
 
@@ -285,52 +286,6 @@ def merge(
         return list(result_iter)
 
 
-def _find_two_list_overlaps(
-    sorted_a: List[IPNet],
-    sorted_b: List[IPNet],
-) -> List[Tuple[IPNet, IPNet]]:
-    """
-    Линейный поиск пересечений между двумя отсортированными списками.
-
-    Использует two-pointer алгоритм по диапазонам адресов.
-    Сложность O(N + M), где N и M — размеры списков.
-    """
-    overlaps: List[Tuple[IPNet, IPNet]] = []
-    i, j = 0, 0
-    len_a, len_b = len(sorted_a), len(sorted_b)
-
-    while i < len_a and j < len_b:
-        n1, n2 = sorted_a[i], sorted_b[j]
-
-        if n1.version < n2.version:
-            i += 1
-            continue
-        if n1.version > n2.version:
-            j += 1
-            continue
-
-        s1 = int(n1.network_address)
-        e1 = int(n1.broadcast_address)
-        s2 = int(n2.network_address)
-        e2 = int(n2.broadcast_address)
-
-        if max(s1, s2) <= min(e1, e2):
-            overlaps.append((n1, n2))
-            if e1 < e2:
-                i += 1
-            elif e2 < e1:
-                j += 1
-            else:
-                i += 1
-                j += 1
-        elif e1 < s2:
-            i += 1
-        else:
-            j += 1
-
-    return overlaps
-
-
 def intersect(source_a: InputSource, source_b: InputSource) -> List[IPNet]:
     """
     Находит пересечение двух списков.
@@ -361,7 +316,7 @@ def intersect(source_a: InputSource, source_b: InputSource) -> List[IPNet]:
     set_b = set(list_b)
     common = set_a.intersection(set_b)
 
-    raw_overlaps = _find_two_list_overlaps(sorted_a, sorted_b)
+    raw_overlaps = find_two_list_overlaps(sorted_a, sorted_b)
 
     for net1, net2 in raw_overlaps:
         if net1 == net2:

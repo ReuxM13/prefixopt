@@ -24,7 +24,7 @@ from ..core.operations.diff import calculate_diff
 from ..core.operations.sorter import sort_networks
 from ..core.operations.subnetter import split_network
 from ..core.operations.subtractor import subtract_networks
-from ..core.operations.overlap import find_two_list_overlaps, find_self_overlaps
+from ..core.operations.overlap import find_two_list_overlaps, find_self_overlaps, classify_overlap_pair, build_intersection_fragments
 from ..core.pipeline import process_prefixes
 from ..data.file_reader import (
     extract_prefixes_from_text,
@@ -509,29 +509,12 @@ def run_intersect(
     partial_overlaps: List[Tuple[IPNet, IPNet, str, str]] = []
 
     for net1, net2 in raw_overlaps:
-        if net1 == net2:
-            continue
-        if net1.subnet_of(net2):
-            partial_overlaps.append(
-                (net1, net2, name1, name2 if not self_mode else name1)
-            )
-        elif net2.subnet_of(net1):
-            partial_overlaps.append(
-                (net2, net1, name2 if not self_mode else name1, name1)
-            )
-        else:
-            partial_overlaps.append(
-                (net1, net2, name1, name2 if not self_mode else name1)
-            )
+        _, subnet, supernet, src_sub, src_super = classify_overlap_pair(
+            net1, net2, name1, name2 if not self_mode else name1
+        )
+        partial_overlaps.append((subnet, supernet, src_sub, src_super))
 
-    intersection_fragments: List[IPNet] = list(common)
-    for net1, net2 in raw_overlaps:
-        if net1 == net2:
-            continue
-        if net1.subnet_of(net2):
-            intersection_fragments.append(net1)
-        elif net2.subnet_of(net1):
-            intersection_fragments.append(net2)
+    intersection_fragments: List[IPNet] = build_intersection_fragments(common, raw_overlaps)
 
     volume_intersection = (
         count_unique_ips(intersection_fragments)
@@ -902,33 +885,16 @@ def run_multi_intersect(
                 sorted_lists[i], sorted_lists[j]
             )
             for net1, net2 in raw_overlaps:
-                if net1 == net2:
-                    continue
-                if net1.subnet_of(net2):
+                is_ident, subnet, supernet, src_sub, src_super = classify_overlap_pair(
+                    net1, net2, source_names[i], source_names[j]
+                )
+                if not is_ident:
                     pairwise_partial.append(
                         PairwisePartial(
-                            subnet=net1,
-                            supernet=net2,
-                            source_subnet=source_names[i],
-                            source_supernet=source_names[j],
-                        )
-                    )
-                elif net2.subnet_of(net1):
-                    pairwise_partial.append(
-                        PairwisePartial(
-                            subnet=net2,
-                            supernet=net1,
-                            source_subnet=source_names[j],
-                            source_supernet=source_names[i],
-                        )
-                    )
-                else:
-                    pairwise_partial.append(
-                        PairwisePartial(
-                            subnet=net1,
-                            supernet=net2,
-                            source_subnet=source_names[i],
-                            source_supernet=source_names[j],
+                            subnet=subnet,
+                            supernet=supernet,
+                            source_subnet=src_sub,
+                            source_supernet=src_super,
                         )
                     )
 

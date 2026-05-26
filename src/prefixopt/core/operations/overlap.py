@@ -4,7 +4,7 @@
 Содержит линейные алгоритмы для поиска точных и частичных перекрытий
 в отсортированных списках. Сложность O(N+M).
 """
-from typing import List, Tuple
+from typing import Dict, List, Tuple, Set
 
 from ..ip_utils import IPNet
 
@@ -95,3 +95,72 @@ def find_self_overlaps(
             overlaps.append((net_i, net_j))
 
     return overlaps
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for classifying overlap results.
+# Эти функции используются повторно в GUI-сервисах и CLI,
+# чтобы избежать дублирования паттерна классификации.
+# ---------------------------------------------------------------------------
+
+
+def classify_overlap_pair(
+    net_a: IPNet,
+    net_b: IPNet,
+    name_a: str,
+    name_b: str,
+) -> Tuple[bool, IPNet, IPNet, str, str]:
+    """
+    Классифицирует пару перекрывающихся сетей и возвращает кортеж.
+
+    Определяет, какая сеть является подсетью, а какая — суперсетью.
+    При частичном перекрытии (без вложенности) сохраняется исходный порядок.
+
+    Args:
+        net_a: Первая сеть.
+        net_b: Вторая сеть.
+        name_a: Имя источника первой сети.
+        name_b: Имя источника второй сети.
+
+    Returns:
+        Кортеж (is_identical, subnet, supernet, source_subnet, source_supernet).
+        Если сети идентичны, возвращается (True, net_a, net_b, name_a, name_b).
+    """
+    if net_a == net_b:
+        return True, net_a, net_b, name_a, name_b
+
+    if net_a.subnet_of(net_b):
+        return False, net_a, net_b, name_a, name_b
+
+    if net_b.subnet_of(net_a):
+        return False, net_b, net_a, name_b, name_a
+
+    return False, net_a, net_b, name_a, name_b
+
+
+def build_intersection_fragments(
+    exact_matches: Set[IPNet],
+    raw_overlaps: List[Tuple[IPNet, IPNet]],
+) -> List[IPNet]:
+    """
+    Собирает список всех сетей, участвующих в пересечениях.
+
+    Включает точные совпадения (exact_matches) и подсети из частичных
+    перекрытий. Используется для расчёта объёма пересечения.
+
+    Args:
+        exact_matches: Множество точных совпадений.
+        raw_overlaps: Сырые перекрытия из find_two_list_overlaps/self.
+
+    Returns:
+        Список сетей, входящих в пересечение.
+    """
+    fragments: List[IPNet] = list(exact_matches)
+    for net1, net2 in raw_overlaps:
+        if net1 == net2:
+            continue
+        if net1.subnet_of(net2):
+            fragments.append(net1)
+        elif net2.subnet_of(net1):
+            fragments.append(net2)
+    return fragments

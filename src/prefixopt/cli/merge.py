@@ -28,7 +28,7 @@ from ..core.pipeline import process_prefixes
 from ..core.operations.sorter import sort_networks
 from ..core.ip_utils import IPNet
 from ..core.ip_counter import count_unique_ips
-from ..core.operations.overlap import find_two_list_overlaps, find_self_overlaps
+from ..core.operations.overlap import find_two_list_overlaps, find_self_overlaps, classify_overlap_pair, build_intersection_fragments
 
 
 # ===================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====================
@@ -66,62 +66,6 @@ def _comment_from_text(text: Optional[str]) -> str:
         return ""
     return f"# {cleaned}"
 
-
-def find_two_list_overlaps(
-    sorted_list1: List[IPNet],
-    sorted_list2: List[IPNet],
-) -> List[Tuple[IPNet, IPNet]]:
-    overlaps: List[Tuple[IPNet, IPNet]] = []
-    i = 0
-    j = 0
-    len1 = len(sorted_list1)
-    len2 = len(sorted_list2)
-    while i < len1 and j < len2:
-        net1 = sorted_list1[i]
-        net2 = sorted_list2[j]
-        if net1.version < net2.version:
-            i += 1
-            continue
-        if net1.version > net2.version:
-            j += 1
-            continue
-        start1 = int(net1.network_address)
-        end1 = int(net1.broadcast_address)
-        start2 = int(net2.network_address)
-        end2 = int(net2.broadcast_address)
-        if max(start1, start2) <= min(end1, end2):
-            overlaps.append((net1, net2))
-            if end1 < end2:
-                i += 1
-            elif end2 < end1:
-                j += 1
-            else:
-                i += 1
-                j += 1
-        elif end1 < start2:
-            i += 1
-        else:
-            j += 1
-    return overlaps
-
-
-def find_self_overlaps(sorted_list: List[IPNet]) -> List[Tuple[IPNet, IPNet]]:
-    overlaps: List[Tuple[IPNet, IPNet]] = []
-    length = len(sorted_list)
-    for i in range(length):
-        net_i = sorted_list[i]
-        end_i = int(net_i.broadcast_address)
-        for j in range(i + 1, length):
-            net_j = sorted_list[j]
-            if net_i.version != net_j.version:
-                break
-            if int(net_j.network_address) > end_i:
-                break
-            overlaps.append((net_i, net_j))
-    return overlaps
-
-
-# ===================== MERGE =====================
 
 def merge(
     file1: Path = typer.Argument(..., help="First input file with IP prefixes"),
@@ -256,14 +200,10 @@ def intersect(
             raw_overlaps = find_self_overlaps(sorted_lst)
             partial_overlaps = []
             for net1, net2 in raw_overlaps:
-                if net1 == net2:
-                    continue
-                if net1.subnet_of(net2):
-                    partial_overlaps.append((net1, net2, sole_name, sole_name))
-                elif net2.subnet_of(net1):
-                    partial_overlaps.append((net2, net1, sole_name, sole_name))
-                else:
-                    partial_overlaps.append((net1, net2, sole_name, sole_name))
+                _, subnet, supernet, src_sub, src_super = classify_overlap_pair(
+                    net1, net2, sole_name, sole_name
+                )
+                partial_overlaps.append((subnet, supernet, src_sub, src_super))
 
             console.print(f"\n[bold underline]Self-Intersection Report[/bold underline]")
             console.print(f"File: [cyan]{sole_name}[/cyan]")
@@ -301,23 +241,12 @@ def intersect(
 
             partial_overlaps: List[Tuple[IPNet, IPNet, str, str]] = []
             for net1, net2 in raw_overlaps:
-                if net1 == net2:
-                    continue
-                if net1.subnet_of(net2):
-                    partial_overlaps.append((net1, net2, name1, name2))
-                elif net2.subnet_of(net1):
-                    partial_overlaps.append((net2, net1, name2, name1))
-                else:
-                    partial_overlaps.append((net1, net2, name1, name2))
+                _, subnet, supernet, src_sub, src_super = classify_overlap_pair(
+                    net1, net2, name1, name2
+                )
+                partial_overlaps.append((subnet, supernet, src_sub, src_super))
 
-            intersection_fragments: List[IPNet] = list(common)
-            for net1, net2 in raw_overlaps:
-                if net1 == net2:
-                    continue
-                if net1.subnet_of(net2):
-                    intersection_fragments.append(net1)
-                elif net2.subnet_of(net1):
-                    intersection_fragments.append(net2)
+            intersection_fragments: List[IPNet] = build_intersection_fragments(common, raw_overlaps)
 
             volume_intersection = count_unique_ips(intersection_fragments) if intersection_fragments else 0
             cov1 = (volume_intersection / volume1 * 100) if volume1 > 0 else 0.0
@@ -437,14 +366,10 @@ def intersect(
             for j in range(i + 1, num_files):
                 raw = find_two_list_overlaps(sorted_opt_lists[i], sorted_opt_lists[j])
                 for net1, net2 in raw:
-                    if net1 == net2:
-                        continue
-                    if net1.subnet_of(net2):
-                        all_pairs_partial.append((net1, net2, names[i], names[j]))
-                    elif net2.subnet_of(net1):
-                        all_pairs_partial.append((net2, net1, names[j], names[i]))
-                    else:
-                        all_pairs_partial.append((net1, net2, names[i], names[j]))
+                    _, subnet, supernet, src_sub, src_super = classify_overlap_pair(
+                        net1, net2, names[i], names[j]
+                    )
+                    all_pairs_partial.append((subnet, supernet, src_sub, src_super))
 
         if all_pairs_partial:
             all_pairs_partial.sort(key=lambda x: (x[0].version, int(x[0].network_address)))
