@@ -1,8 +1,17 @@
 """
-Модуль для удаления вложенных IP-сетей.
+Remove networks that are nested inside another network in the list.
+
+Example:
+    Input:   [10.0.0.0/8, 10.0.0.0/24]
+    Output:  [10.0.0.0/8]
+
+The algorithm is O(N) when the input is pre-sorted broadest-first because a
+parent always precedes its children. If the caller has already sorted the data
+it can pass ``assume_sorted=True`` to skip the redundant sort.
 """
 
-from typing import List, Union, Iterable
+from typing import Iterable, List, Union
+
 from ipaddress import IPv4Network, IPv6Network
 
 
@@ -10,55 +19,51 @@ def remove_nested(
     networks: Iterable[Union[IPv4Network, IPv6Network]],
     assume_sorted: bool = False,
 ) -> List[Union[IPv4Network, IPv6Network]]:
-    """
-    Deletes nested networks.
-    
-    Алгоритм O(N) требует, чтобы входные данные были отсортированы 
-    в порядке Broadest First (см. sorter.py).
+    """Drop subnets that are covered by an earlier, broader network.
 
     Args:
-        networks: Итератор или список объектов IPNetwork.
-        assume_sorted: Если True — не сортирует заново (экономия времени).
-                       Использовать ТОЛЬКО если уверены в порядке данных.
+        networks:      Input networks.
+        assume_sorted: When ``True``, the caller guarantees the input is
+                       sorted broadest-first. When ``False``, we sort here.
 
     Returns:
-        Список невложенных сетей.
+        A new list without redundant nested entries.
     """
     if assume_sorted:
-        # Оптимизация: если это уже список, не копируем его лишний раз
-        sorted_networks = networks if isinstance(networks, list) else list(networks)
+        sorted_networks = (
+            networks if isinstance(networks, list) else list(networks)
+        )
     else:
-        # Принудительная сортировка (Broadest First)
         sorted_networks = sorted(
             networks,
             key=lambda net: (
                 net.version,
                 int(net.network_address),
                 net.prefixlen,
-            )
+            ),
         )
 
     if not sorted_networks:
         return []
 
     optimized: List[Union[IPv4Network, IPv6Network]] = []
-    
-    # Инициализируем первым элементом
+
+    # Seed with the broadest first network; it is the reference parent.
     last_added = sorted_networks[0]
     optimized.append(last_added)
 
     for current in sorted_networks[1:]:
-        # Если версии разные - это новая сеть, сброс контекста
+        # A new IP version can never be nested in the previous one.
         if current.version != last_added.version:
             optimized.append(current)
             last_added = current
             continue
 
-        # Проверка: входит ли текущая (узкая) в последнюю (широкую)?
+        # If the current network is inside the last added parent it is redundant.
         if current.subnet_of(last_added):
-            continue  # Вложенная сеть или дубликат
-        
-        # Если не входит
+            continue
+
+        # Otherwise keep it and treat it as the active parent going forward.
         optimized.append(current)
         last_added = current
 

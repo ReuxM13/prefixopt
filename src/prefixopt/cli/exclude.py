@@ -1,143 +1,246 @@
 """
-Модуль команды exclude для CLI.
+CLI command: ``exclude`` - subtract networks from a source list.
 
-Отвечает за операции вычитания сетей (исключение подмножеств) из списка.
-Поддерживает режим сохранения комментариев при разбиении сетей.
+This is "hole punching": given a source network and a network to remove, the
+source is split into the CIDR fragments that cover the remainder. For example,
+``10.0.0.0/30`` minus ``10.0.0.1/32`` yields ``10.0.0.0/32`` and
+``10.0.0.2/31``.
+
+Supports comment inheritance (fragments inherit their parent network's
+comment, unless replaced by ``--append-comment``) and the standard output
+options.
 """
+
+import contextlib
 import sys
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Dict, List, Optional
 
 import typer
 
-from .common import OutputFormat, handle_output, console
-from ..data.file_reader import read_networks, read_stream, read_prefixes_with_comments
-from ..core.pipeline import process_prefixes
-from ..core.ip_utils import normalize_prefix, IPNet, is_subnet_of
+from ..comments import apply_append_comment
+from ..core.ip_utils import IPNet, is_subnet_of, normalize_prefix
 from ..core.operations.subtractor import subtract_networks
+from ..core.pipeline import process_prefixes
+from ..data.file_reader import (
+    read_networks,
+    read_prefixes_with_comments,
+    read_stream,
+)
+from .common import OutputFormat, console, handle_output, is_interactive
+
+
+def _inherited_comment(
+    fragment: IPNet,
+    comments_map: Dict[IPNet, str],
+    source_prefixes: List[IPNet],
+) -> str:
+    """Return the comment that should be inherited by a resulting fragment.
+
+    If the fragment exactly matches a source prefix its comment is used;
+    otherwise we find the smallest source network that contains it and
+    inherit that parent's comment (used after hole-punching).
+    """
+    if fragment in comments_map:
+        return comments_map[fragment]
+    for original in source_prefixes:
+        if (
+            fragment.version == original.version
+            and is_subnet_of(fragment, original)
+            and original in comments_map
+        ):
+            return comments_map[original]
+    return ""
 
 
 def exclude(
-    target: str = typer.Argument(..., help="Prefix to exclude (e.g. 10.0.0.0/8) OR path to file"),
-    input_file: Optional[Path] = typer.Argument(None, help="Input file with IP prefixes"),
-    output_file: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file"),
-    ipv6_only: bool = typer.Option(False, "--ipv6-only", help="Process IPv6 only"),
-    ipv4_only: bool = typer.Option(False, "--ipv4-only", help="Process IPv4 only"),
-    format: OutputFormat = typer.Option(OutputFormat.list, "--format", "-f"),
-    keep_comments: bool = typer.Option(False, "--keep-comments", help="Preserve comments from input file."),
+    target: str = typer.Argument(
+        ..., help="Prefix to exclude (e.g. 10.0.0.0/8) OR path to file"
+    ),
+    input_file: Optional[Path] = typer.Argument(
+        None, help="Input file with IP prefixes"
+    ),
+    output_file: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Output file"
+    ),
+    ipv6_only: bool = typer.Option(
+        False, "--ipv6-only", help="Process IPv6 only"
+    ),
+    ipv4_only: bool = typer.Option(
+        False, "--ipv4-only", help="Process IPv4 only"
+    ),
+    format: OutputFormat = typer.Option(
+        OutputFormat.list, "--format", "-f"
+    ),
+    keep_comments: bool = typer.Option(
+        False,
+        "--keep-comments",
+        help="Preserve comments from input file.",
+    ),
+    append_comment: Optional[str] = typer.Option(
+        None,
+        "--append-comment",
+        help="Append this comment to all remaining fragments. Existing "
+        "comments are removed unless --keep-existing-comments is used.",
+    ),
+    keep_existing_comments: bool = typer.Option(
+        False,
+        "--keep-existing-comments",
+        help="Keep inherited comments and append the new comment to the end. "
+        "Requires --append-comment.",
+    ),
     strict: bool = typer.Option(
-    False,
-    "--strict",
-    help="Fail on invalid network addresses with host bits set instead of auto-correcting them."
-    )
+        False,
+        "--strict",
+        help="Fail on invalid network addresses with host bits set instead "
+        "of auto-correcting them.",
+    ),
 ) -> None:
-    """
-    Deletes the specified networks (Target) from the source list (Input).
-
-    Если исключаемая сеть находится внутри более крупной сети из списка,
-    исходная сеть будет разбита на фрагменты ("пробивание дырок").
-    """
+    """Delete specified networks (Target) from the source list (Input)."""
     try:
-        # 1. Загрузка списка исключений (Target)
-        # Target может быть как файлом, так и просто строкой с префиксом.
+        # Comment outputs are line-based and cannot be combined with CSV.
+        if keep_comments and format == OutputFormat.csv:
+            console.print(
+                "[red]Error: Cannot use --keep-comments with CSV "
+                "format.[/red]"
+            )
+            sys.exit(1)
+        if append_comment and format == OutputFormat.csv:
+            console.print(
+                "[red]Error: Cannot use --append-comment with CSV "
+                "format.[/red]"
+            )
+            sys.exit(1)
+        if keep_existing_comments and not append_comment:
+            console.print(
+                "[red]Error: --keep-existing-comments requires "
+                "--append-comment.[/red]"
+            )
+            sys.exit(1)
+
+        # The exclusion target may be either a file of prefixes or a single
+        # prefix given on the command line.
         exclude_list: List[IPNet] = []
         target_path = Path(target)
-
-        if target_path.exists() and target_path.is_file():
-            try:
-                # Читаем файл исключений. Комментарии здесь не важны, нужны только сети.
-                exclude_list = list(read_networks(target_path, strict=strict))
-                console.print(f"[dim]Loaded {len(exclude_list)} exclusion rules.[/dim]")
-            except Exception as e:
-                console.print(f"[red]Error reading exclusion file: {e}[/red]")
-                sys.exit(1)
+        if target_path.exists():
+            exclude_list = list(read_networks(target_path, strict=strict))
         else:
-            # Если это не файл, пробуем распарсить как одиночный префикс
             try:
-                net = normalize_prefix(target, strict=strict)
-                exclude_list = [net]
+                exclude_list = [normalize_prefix(target, strict=strict)]
             except ValueError:
-                console.print(f"[red]Error: '{target}' is not a valid IP prefix or file.[/red]")
+                console.print(
+                    f"[red]Error: '{target}' is not a valid IP prefix or "
+                    "file.[/red]"
+                )
                 sys.exit(1)
 
-        # 2. Загрузка исходных данных (Source)
+        commented_mode = keep_comments or bool(append_comment)
         source_prefixes: List[IPNet] = []
         comments_map: Dict[IPNet, str] = {}
 
-        if keep_comments:
+        if commented_mode:
+            # In comment mode we must read from a file (STDIN has no comments
+            # support in exclude because target already takes the first arg).
             if not input_file:
-                 console.print("[red]Error: --keep-comments requires an input file.[/red]")
-                 sys.exit(1)
-            
-            # Читаем файл, сохраняя привязку "Сеть -> Комментарий"
-            for net, comm in read_prefixes_with_comments(input_file, strict=strict):
+                console.print(
+                    "[red]Error: comment modes require an input file.[/red]"
+                )
+                sys.exit(1)
+            for net, comm in read_prefixes_with_comments(
+                input_file, strict=strict
+            ):
                 source_prefixes.append(net)
                 if comm:
                     comments_map[net] = comm
         else:
-            # Обычный режим: читаем из файла или STDIN
             if input_file:
-                source_prefixes = list(read_networks(input_file, strict=strict))
+                source_prefixes = list(
+                    read_networks(input_file, strict=strict)
+                )
             elif not sys.stdin.isatty():
                 source_prefixes = list(read_stream(sys.stdin, strict=strict))
             else:
                 console.print("[red]Error: No input provided.[/red]")
                 sys.exit(1)
 
-        # 3. Выполнение операции вычитания
-        with console.status("Processing exclusions...", spinner="dots"):
-            # Получаем "сырой" список остатков сетей
+        if is_interactive():
+            status_cm = console.status("Processing exclusions...", spinner="dots")
+        else:
+            status_cm = contextlib.nullcontext()
+        with status_cm:
+            # Core subtraction produces raw fragments.
             raw_result = subtract_networks(source_prefixes, exclude_list)
-            
-            if keep_comments:
-                # Режим с комментариями:
-                # Мы не можем агрегировать результат, чтобы не потерять привязку к комментариям.
-                # Наша задача - восстановить комментарии для каждого оставшегося фрагмента.
-                
-                final_output_lines = []
-                
-                # Сортируем для удобства чтения (Broadest First)
-                raw_result.sort(key=lambda x: (x.version, int(x.network_address), x.prefixlen))
 
-                for fragment in raw_result:
-                    inherited_comment = ""
-                    
-                    # Сценарий А: Сеть не изменилась (прямое совпадение)
-                    if fragment in comments_map:
-                        inherited_comment = comments_map[fragment]
-                    else:
-                        # Сценарий Б: Сеть была разбита. Ищем её родителя.
-                        # Это линейный поиск O(N*M), но гарантирует корректность наследования.
-                        for original in source_prefixes:
-                            # Ускорение: проверяем версию перед дорогой проверкой subnet_of
-                            if fragment.version == original.version and is_subnet_of(fragment, original):
-                                if original in comments_map:
-                                    inherited_comment = comments_map[original]
-                                    break
-                    
-                    line = f"{fragment} {inherited_comment}" if inherited_comment else str(fragment)
-                    final_output_lines.append(line)
-                
-                # Вывод результатов в файл или консоль
-                content = "\n".join(final_output_lines) + "\n"
-                
+            if commented_mode:
+                # Without preserving old comments we can safely optimise
+                # (aggregate) the fragments before stamping the new comment.
+                if append_comment and not keep_existing_comments:
+                    final_result = process_prefixes(
+                        raw_result,
+                        sort=True,
+                        remove_nested=True,
+                        aggregate=True,
+                        ipv4_only=ipv4_only,
+                        ipv6_only=ipv6_only,
+                    )
+                    lines = [
+                        f"{net} # {append_comment.strip()}"
+                        for net in final_result
+                    ]
+                else:
+                    # Preserve/inherit comments: don't aggregate fragments
+                    # because that would change comment ownership.
+                    raw_result.sort(
+                        key=lambda x: (
+                            x.version,
+                            int(x.network_address),
+                            x.prefixlen,
+                        )
+                    )
+                    lines = []
+                    for fragment in raw_result:
+                        inherited = (
+                            _inherited_comment(
+                                fragment, comments_map, source_prefixes
+                            )
+                            if (keep_comments or keep_existing_comments)
+                            else ""
+                        )
+                        if append_comment:
+                            comment = apply_append_comment(
+                                inherited,
+                                append_comment,
+                                keep_existing=keep_existing_comments,
+                            )
+                        else:
+                            comment = inherited
+                        lines.append(
+                            f"{fragment} {comment}"
+                            if comment
+                            else str(fragment)
+                        )
+
+                content = "\n".join(lines)
+                if content:
+                    content += "\n"
                 if output_file:
-                    with open(output_file, 'w', encoding='utf-8') as f:
+                    with open(output_file, "w", encoding="utf-8") as f:
                         f.write(content)
-                    console.print(f"[green]Saved {len(final_output_lines)} fragments (with comments) to {output_file}[/green]")
+                    console.print(
+                        f"[green]Saved {len(lines)} fragments to "
+                        f"{output_file}[/green]"
+                    )
                 else:
                     print(content, end="")
-
             else:
-                # Стандартный режим:
-                # Запускаем полный цикл оптимизации для получения минимального списка CIDR.
+                # Non-comment mode: fully optimise the remainder.
                 final_result = process_prefixes(
                     raw_result,
                     sort=True,
                     remove_nested=True,
                     aggregate=True,
                     ipv4_only=ipv4_only,
-                    ipv6_only=ipv6_only
+                    ipv6_only=ipv6_only,
                 )
                 handle_output(list(final_result), format, output_file)
 

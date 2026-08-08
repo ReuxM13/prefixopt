@@ -1,6 +1,8 @@
 """
-Вкладка статистики по списку префиксов.
+Stats tab: displays summary statistics (counts, unique IPs, compression ratio,
+duplicates) in an HTML report.
 """
+
 
 from typing import Any
 
@@ -68,15 +70,16 @@ _STATS_CSS = """
 
 
 class StatsTab(BaseOperationTab):
-    """Вкладка сбора и отображения статистики."""
+
+    """Show summary statistics and duplicates for a prefix list."""
 
     def __init__(self) -> None:
-        """Инициализирует вкладку и создает элементы интерфейса."""
+        """Set up the widget, build its UI and wire up signals."""
         super().__init__()
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """Создает структуру вкладки."""
+        """Construct and lay out all child widgets for this tab."""
         desc = QLabel("Show statistics for a prefix list.")
         desc.setProperty("role", "description")
         desc.setWordWrap(True)
@@ -109,12 +112,6 @@ class StatsTab(BaseOperationTab):
         self._update_state()
 
     def _is_dark_theme(self) -> bool:
-        """
-        Определяет активную тему по яркости фона палитры.
-
-        Returns:
-            True для тёмной темы.
-        """
         bg = self.palette().color(QPalette.ColorRole.Window)
         luminance = (
             0.299 * bg.redF()
@@ -124,15 +121,6 @@ class StatsTab(BaseOperationTab):
         return luminance < 0.5
 
     def _build_html(self, result: StatsResult) -> str:
-        """
-        Формирует HTML-отчёт статистики.
-
-        Args:
-            result: Результат сбора статистики.
-
-        Returns:
-            HTML-строка отчёта.
-        """
         dark = self._is_dark_theme()
 
         if dark:
@@ -234,13 +222,13 @@ class StatsTab(BaseOperationTab):
         return "".join(parts)
 
     def _update_state(self, _: Any = None) -> None:
-        """Обновляет доступность кнопки запуска."""
+        """Enable/disable the Run button based on current input validity."""
         self.run_button.setEnabled(
             self.input_panel.get_data_source() is not None
         )
 
     def _run_stats(self) -> None:
-        """Запускает сбор статистики в фоновом потоке."""
+        """Collect options and launch the background worker."""
         source = self.input_panel.get_data_source()
         if source is None:
             return
@@ -251,12 +239,7 @@ class StatsTab(BaseOperationTab):
         self._start_worker(worker, "Calculating stats...")
 
     def _on_stats_result(self, result: StatsResult) -> None:
-        """
-        Формирует HTML-отчёт и отображает его в панели вывода.
-
-        Args:
-            result: Результат сбора статистики.
-        """
+        """Handle the stats result event."""
         self._expand_output()
         self.output_panel.set_html(self._build_html(result))
         self.progress_panel.set_status(
@@ -264,32 +247,22 @@ class StatsTab(BaseOperationTab):
         )
 
     def trigger_open(self) -> None:
-        """Открывает диалог выбора файла."""
+        """Programmatically open a file for this tab (used by Ctrl+O)."""
         self.input_panel.browse_button.click()
 
     def trigger_run(self) -> None:
-        """Запускает сбор статистики."""
+        """Programmatically run this tab's operation (used by Ctrl+R)."""
         if self.run_button.isEnabled():
             self.run_button.click()
 
     def save_settings(self) -> dict:
-        """
-        Сохраняет параметры вкладки.
-
-        Returns:
-            Словарь с настройками.
-        """
+        """Serialise this tab's widget state for persistence."""
         return {
             "show_details": self.show_details.isChecked(),
         }
 
     def load_settings(self, state: dict) -> None:
-        """
-        Восстанавливает параметры вкладки.
-
-        Args:
-            state: Словарь с настройками.
-        """
+        """Restore widget state previously saved by save_settings."""
         if not state:
             return
         self.show_details.setChecked(state.get("show_details", False))

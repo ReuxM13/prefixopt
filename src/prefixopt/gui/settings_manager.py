@@ -1,7 +1,15 @@
 """
-Менеджер сохранения и восстановления настроек GUI.
+Persistent settings for the GUI, built on top of :class:`QSettings`.
 
-Использует QSettings. Реализован как синглтон.
+A single :class:`SettingsManager` singleton holds:
+    * per-tab state (checkboxes, combo boxes, recent text, etc.);
+    * main-window geometry and the active tab;
+    * splitter sizes;
+    * the recent-files list.
+
+Tabs participate by implementing ``save_settings``/``load_settings`` and
+registering themselves with :meth:`register_tab`. Storage uses the platform's
+native backend (Registry on Windows, plist on macOS, INI files on Linux).
 """
 
 from __future__ import annotations
@@ -12,67 +20,44 @@ from PySide6.QtCore import QSettings
 
 
 class SettingsManager:
-    """Менеджер настроек приложения и вкладок."""
+    """Singleton wrapper around QSettings with tab-specific helpers."""
 
     _instance: "SettingsManager | None" = None
 
     def __init__(self) -> None:
+        # Organization/application names determine where QSettings stores data.
+        """Initialise the component."""
         self.settings = QSettings("prefixopt", "gui")
         self._tabs: dict[str, object] = {}
 
     @classmethod
     def instance(cls) -> "SettingsManager":
-        """
-        Возвращает экземпляр менеджера настроек.
-
-        Returns:
-            Экземпляр SettingsManager.
-        """
+        """Return the process-wide singleton, creating it on first use."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     def register_tab(self, name: str, widget: object) -> None:
-        """
-        Регистрирует вкладку для сохранения настроек.
-
-        Args:
-            name: Ключ вкладки.
-            widget: Экземпляр виджета вкладки.
-        """
+        """Register a tab so its settings can be saved/loaded by name."""
         self._tabs[name] = widget
 
     def unregister_tab(self, name: str) -> None:
-        """
-        Удаляет вкладку из регистрации.
-
-        Args:
-            name: Ключ вкладки.
-        """
+        """Remove a previously registered tab."""
         self._tabs.pop(name, None)
 
     def save_tab_settings(self, name: str) -> None:
-        """
-        Сохраняет настройки одной вкладки.
-
-        Args:
-            name: Ключ вкладки.
-        """
+        """Ask a tab to serialise its state, then persist the dict."""
         widget = self._tabs.get(name)
         if widget and hasattr(widget, "save_settings"):
             try:
                 state = widget.save_settings()
                 self.settings.setValue(f"tabs/{name}", state)
             except Exception:
+                # Settings errors must never crash the application.
                 pass
 
     def load_tab_settings(self, name: str) -> None:
-        """
-        Загружает настройки одной вкладки.
-
-        Args:
-            name: Ключ вкладки.
-        """
+        """Restore a tab's previously saved state, if any."""
         widget = self._tabs.get(name)
         if widget and hasattr(widget, "load_settings"):
             try:
@@ -83,19 +68,17 @@ class SettingsManager:
                 pass
 
     def save_all(self) -> None:
-        """
-        Сохраняет настройки всех зарегистрированных вкладок.
-        """
+        """Persist the state of every registered tab."""
         for name in self._tabs:
             self.save_tab_settings(name)
         self.settings.sync()
 
     def load_all(self) -> None:
-        """
-        Загружает настройки всех зарегистрированных вкладок.
-        """
+        """Restore the state of every registered tab."""
         for name in self._tabs:
             self.load_tab_settings(name)
+
+    # ---- Main window ----
 
     def save_main_window(
         self,
@@ -103,34 +86,17 @@ class SettingsManager:
         maximized: bool,
         current_tab: int,
     ) -> None:
-        """
-        Сохраняет геометрию и состояние главного окна.
-
-        Args:
-            geometry: QByteArray из saveGeometry().
-            maximized: Признак максимизированного окна.
-            current_tab: Индекс активной вкладки.
-        """
+        """Save window geometry, maximized state and active tab."""
         self.settings.setValue("main_window/geometry", geometry)
         self.settings.setValue("main_window/maximized", maximized)
         self.settings.setValue("main_window/current_tab", current_tab)
 
     def load_main_window_geometry(self) -> Any:
-        """
-        Возвращает сохраненную геометрию окна.
-
-        Returns:
-            QByteArray геометрии или None.
-        """
+        """Return the saved window geometry (QByteArray) or None."""
         return self.settings.value("main_window/geometry")
 
     def load_main_window_maximized(self) -> bool:
-        """
-        Возвращает признак максимизированного окна.
-
-        Returns:
-            True, если окно было максимизировано.
-        """
+        """Return whether the window was maximized when last closed."""
         value = self.settings.value("main_window/maximized", False)
         if isinstance(value, bool):
             return value
@@ -139,38 +105,21 @@ class SettingsManager:
         return bool(value)
 
     def load_main_window_current_tab(self) -> int:
-        """
-        Возвращает индекс последней активной вкладки.
-
-        Returns:
-            Индекс вкладки.
-        """
+        """Return the index of the tab that was active on last close."""
         value = self.settings.value("main_window/current_tab", 0)
         try:
             return int(value)
         except (TypeError, ValueError):
             return 0
 
-    def save_splitter_sizes(self, key: str, sizes: list[int]) -> None:
-        """
-        Сохраняет размеры сплиттера.
+    # ---- Splitters ----
 
-        Args:
-            key: Ключ сплиттера.
-            sizes: Список размеров.
-        """
+    def save_splitter_sizes(self, key: str, sizes: list[int]) -> None:
+        """Persist the sizes of a named QSplitter."""
         self.settings.setValue(f"splitters/{key}", sizes)
 
     def load_splitter_sizes(self, key: str) -> list[int]:
-        """
-        Загружает размеры сплиттера.
-
-        Args:
-            key: Ключ сплиттера.
-
-        Returns:
-            Список размеров сплиттера.
-        """
+        """Load previously saved splitter sizes for ``key``."""
         value = self.settings.value(f"splitters/{key}", [])
         if value is None:
             return []
@@ -189,13 +138,10 @@ class SettingsManager:
         except (TypeError, ValueError):
             return []
 
-    def add_recent_file(self, path: str) -> None:
-        """
-        Добавляет файл в список недавних.
+    # ---- Recent files ----
 
-        Args:
-            path: Путь к файлу.
-        """
+    def add_recent_file(self, path: str) -> None:
+        """Add ``path`` to the top of the recent-files list (max 10)."""
         recent = self.recent_files()
         if path in recent:
             recent.remove(path)
@@ -203,12 +149,7 @@ class SettingsManager:
         self.settings.setValue("recent_files", recent[:10])
 
     def recent_files(self) -> list[str]:
-        """
-        Возвращает список недавних файлов.
-
-        Returns:
-            Список путей.
-        """
+        """Return the list of recently opened file paths."""
         value = self.settings.value("recent_files", [])
         if value is None:
             return []

@@ -1,157 +1,91 @@
 """
-Панель с вертикальным разделителем для структурированного отчета и вывода.
+A two-pane output panel used by reports that have both a narrative report and
+a plain prefix list (Intersect, Check).
 
-Верхняя область поддерживает HTML-рендеринг.
-Нижняя область — OutputPanel с действиями Save/Copy/Clear.
+The top pane shows HTML or rich text (the report), while the bottom pane is a
+regular :class:`OutputPanel` for the machine-readable prefix list. The class
+also implements the ``_error_display_widget``/``set_report_text`` interface
+expected by :class:`BaseOperationTab` so error handling works uniformly.
 """
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
-    QPushButton,
     QSplitter,
-    QTextEdit,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
 
-from .detachable_manager import DetachableWidgetManager
 from .output_panel import OutputPanel
 
 
 class SplitOutputPanel(QWidget):
-    """Панель из двух областей: HTML-отчет и текстовый вывод со счётчиком строк."""
+    """Vertically split panel: HTML report on top, output panel below."""
 
     def __init__(
         self,
-        report_title: str = "Structured report",
+        report_title: str = "Report",
         output_title: str = "Output",
         parent: Optional[QWidget] = None,
     ) -> None:
-        """
-        Инициализирует двойную панель вывода.
-
-        Args:
-            report_title: Заголовок верхней области отчета.
-            output_title: Заголовок нижней области вывода.
-            parent: Родительский виджет.
-        """
+        """Initialise the component."""
         super().__init__(parent)
         self._report_title = report_title
         self._output_title = output_title
-        self._detach_btn: Optional[QPushButton] = None
-        self._detach_manager: Optional[DetachableWidgetManager] = None
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """Создает структуру панели с разделителем и счётчиком строк."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        """Construct and lay out the child widgets."""
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
 
-        toolbar = QHBoxLayout()
-        self.report_line_count = QLabel("Lines: 0")
-        toolbar.addWidget(self.report_line_count)
-        toolbar.addStretch()
-        self._detach_btn = QPushButton("↗ Pop out")
-        toolbar.addWidget(self._detach_btn)
-        layout.addLayout(toolbar)
+        # QSplitter lets the user resize the two panes.
+        self.splitter = QSplitter()
+        self.splitter.setOrientation(Qt.Vertical)
 
-        self.splitter = QSplitter(Qt.Vertical)
-        self.splitter.setChildrenCollapsible(False)
+        # ---- Report pane ----
+        report_widget = QWidget()
+        report_layout = QVBoxLayout(report_widget)
+        report_layout.addWidget(QLabel(self._report_title))
+        self.report_edit = QTextBrowser()
+        self.report_edit.setOpenExternalLinks(True)
+        report_layout.addWidget(self.report_edit)
+        self.splitter.addWidget(report_widget)
 
-        self.report_edit = QTextEdit()
-        self.report_edit.setReadOnly(True)
-        self.report_edit.setPlaceholderText(
-            f"{self._report_title} will appear here."
-        )
-        self.report_edit.textChanged.connect(self._update_report_line_count)
-        self.splitter.addWidget(self.report_edit)
-
+        # ---- Output pane ----
         self.output_panel = OutputPanel(title=self._output_title)
         self.splitter.addWidget(self.output_panel)
 
-        self.report_edit.setMinimumHeight(0)
-        self.output_panel.setMinimumHeight(0)
-
+        # Give the report more room by default.
         self.splitter.setStretchFactor(0, 3)
-        self.splitter.setStretchFactor(1, 7)
+        self.splitter.setStretchFactor(1, 1)
 
-        QTimer.singleShot(0, lambda: self.splitter.setSizes([0, 0]))
-
-        layout.addWidget(self.splitter)
-
-        self._detach_manager = DetachableWidgetManager(self, self._detach_btn)
-
-    def _update_report_line_count(self) -> None:
-        """Обновляет счётчик строк области отчёта."""
-        text = self.report_edit.toPlainText()
-        count = len(text.splitlines()) if text else 0
-        self.report_line_count.setText(f"Report lines: {count:,}")
+        root.addWidget(self.splitter)
 
     def set_report_text(self, text: str) -> None:
-        """
-        Устанавливает plain text в область отчета.
-
-        Args:
-            text: Текст отчета.
-        """
+        """Show plain text in the report pane."""
         self.report_edit.setPlainText(text)
 
     def set_report_html(self, html: str) -> None:
-        """
-        Устанавливает HTML-содержимое в область отчета.
-
-        Args:
-            html: HTML-текст отчета.
-        """
+        """Show HTML in the report pane."""
         self.report_edit.setHtml(html)
 
-    def append_report_text(self, text: str) -> None:
-        """
-        Добавляет plain text в конец области отчета.
-
-        Args:
-            text: Текст для добавления.
-        """
-        current = self.report_edit.toPlainText()
-        if current:
-            self.report_edit.setPlainText(f"{current}\n{text}")
-            return
-        self.report_edit.setPlainText(text)
-
-    def clear_report(self) -> None:
-        """Очищает область отчета."""
-        self.report_edit.clear()
-
-    def get_output_panel(self) -> OutputPanel:
-        """
-        Возвращает ссылку на OutputPanel.
-
-        Returns:
-            OutputPanel нижней области.
-        """
-        return self.output_panel
-
     def set_output_text(self, text: str) -> None:
-        """
-        Устанавливает plain text в область вывода.
-
-        Args:
-            text: Текст для отображения.
-        """
+        """Forward text to the lower output panel."""
         self.output_panel.set_text(text)
 
-    def clear_output(self) -> None:
-        """Очищает область вывода."""
-        self.output_panel.clear()
-    def get_nested_splitter(self):
-        """
-        Возвращает внутренний разделитель между отчётом и выводом.
+    def get_output_panel(self) -> OutputPanel:
+        """Return the underlying OutputPanel (used by save/copy shortcuts)."""
+        return self.output_panel
 
-        Returns:
-            QSplitter для сохранения/восстановления размеров.
-        """
-        return getattr(self, "splitter", None)
+    def get_nested_splitter(self) -> Optional[QSplitter]:
+        """Return the internal report/output splitter so its size can persist."""
+        return self.splitter
+
+    def clear_output(self) -> None:
+        """Clear both panes."""
+        self.report_edit.clear()
+        self.output_panel.clear()

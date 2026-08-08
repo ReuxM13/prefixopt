@@ -1,5 +1,10 @@
 """
-Панель вывода результата с пейджинацией, иконками и placeholder.
+Output panel with Save/Copy/Clear actions and large-result paging.
+
+Rich's console markup uses tags like ``[green]...[/green]``. Because results may
+be rendered into a plain QTextEdit, those tags are stripped before display.
+To keep the UI responsive on huge outputs, only the first ``_PAGE_SIZE`` lines
+are rendered; the full text is retained in memory for Save/Copy.
 """
 
 import re
@@ -21,47 +26,36 @@ from PySide6.QtWidgets import (
 
 from .detachable_manager import DetachableWidgetManager
 
+# Maximum number of lines rendered in the widget. The full text is still
+# available via get_text()/Save.
 _PAGE_SIZE = 10_000
 _PLACEHOLDER = "Results will appear here after running the operation."
 
 
 def strip_rich_tags(text: str) -> str:
-    """
-    Удаляет теги форматирования вида [tag]...[/tag].
-
-    Args:
-        text: Исходный текст.
-
-    Returns:
-        Текст без rich-тегов.
-    """
+    """Remove Rich console markup tags (``[tag]`` / ``[/tag]``) from ``text``."""
     return re.sub(r"\[/?[a-zA-Z]+\]", "", text)
 
 
 class OutputPanel(QWidget):
-    """Панель вывода с пейджинацией, иконками и placeholder."""
+    """Read-only text output panel with a toolbar and line counter."""
 
     def __init__(
         self,
         title: str = "Output",
         parent: Optional[QWidget] = None,
     ) -> None:
-        """
-        Инициализирует панель вывода.
-
-        Args:
-            title: Заголовок панели.
-            parent: Родительский виджет.
-        """
+        """Initialise the component."""
         super().__init__(parent)
         self._title = title
+        # Full, untruncated text for copy/save operations.
         self._full_text: str = ""
         self._detach_btn: Optional[QPushButton] = None
         self._detach_manager: Optional[DetachableWidgetManager] = None
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """Создает структуру панели."""
+        """Construct and lay out the child widgets."""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
@@ -98,19 +92,13 @@ class OutputPanel(QWidget):
         group_layout.addWidget(self.output_edit)
         root.addWidget(group)
 
-        self._detach_manager = DetachableWidgetManager(self, self._detach_btn)
+        self._detach_manager = DetachableWidgetManager(
+            self, self._detach_btn
+        )
         self._update_line_count(0)
 
     def set_text(self, text: str) -> None:
-        """
-        Устанавливает plain text с пейджинацией.
-
-        При превышении порога строк добавляется уведомление.
-        Полный текст сохраняется для Save и Copy.
-
-        Args:
-            text: Текст для отображения.
-        """
+        """Set the displayed result, paging when there are too many lines."""
         clean = strip_rich_tags(text)
         self._full_text = clean
 
@@ -118,10 +106,11 @@ class OutputPanel(QWidget):
         total = len(lines)
 
         if total > _PAGE_SIZE:
+            # Show only the first page in the widget to stay responsive.
             preview = "\n".join(lines[:_PAGE_SIZE])
             notice = (
                 f"\n\n--- Showing {_PAGE_SIZE:,} of {total:,} lines. "
-                f'Use "Save..." to export the full result. ---'
+                'Use "Save..." to export the full result. ---'
             )
             self.output_edit.setPlainText(preview + notice)
         else:
@@ -130,63 +119,42 @@ class OutputPanel(QWidget):
         self._update_line_count(total)
 
     def set_html(self, html: str) -> None:
-        """
-        Устанавливает HTML-содержимое.
-
-        Args:
-            html: HTML-текст для отображения.
-        """
+        """Render HTML content (used by some rich reports)."""
         self.output_edit.setHtml(html)
         text = self.output_edit.toPlainText()
         self._full_text = text
         self._update_line_count()
 
     def append_text(self, text: str) -> None:
-        """
-        Добавляет plain text в конец содержимого.
-
-        Args:
-            text: Текст для добавления.
-        """
+        """Append text to the current output."""
         clean = strip_rich_tags(text)
         current = self._full_text
         combined = f"{current}\n{clean}" if current else clean
         self.set_text(combined)
 
     def get_text(self) -> str:
-        """
-        Возвращает полное содержимое как plain text.
-
-        Returns:
-            Полный текст.
-        """
+        """Return the full (untruncated) output text."""
         return self._full_text
 
     def clear(self) -> None:
-        """Очищает область вывода и внутренний буфер."""
+        """Empty the output."""
         self._full_text = ""
         self.output_edit.clear()
         self._update_line_count(0)
 
     def _update_line_count(self, total: Optional[int] = None) -> None:
-        """
-        Обновляет счетчик строк.
-
-        Args:
-            total: Количество строк. Если None, подсчитывается.
-        """
+        """Refresh the ``Lines: N`` label."""
         if total is None:
             text = self._full_text
             total = len(text.splitlines()) if text else 0
-
         self.line_count_label.setText(f"Lines: {total:,}")
 
     def _copy_to_clipboard(self) -> None:
-        """Копирует полный текст в буфер обмена."""
+        """Copy the full output text to the system clipboard."""
         QApplication.clipboard().setText(self._full_text)
 
     def _save_to_file(self) -> None:
-        """Сохраняет полный текст в файл."""
+        """Prompt for a path and write the full output there."""
         if not self._full_text:
             QMessageBox.information(
                 self,

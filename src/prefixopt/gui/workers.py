@@ -1,21 +1,28 @@
 """
-Базовые worker-классы для запуска задач в фоне.
+Background-task primitives for running core operations off the Qt GUI thread.
 
-Worker выполняет функцию в потоке из QThreadPool.
-Поддерживает мягкую отмену: результат игнорируется,
-интерфейс может быть разблокирован немедленно.
+Long-running work (optimising huge files, hole punching, etc.) must never
+block the event loop, otherwise the UI freezes. Each tab wraps its service
+call in a :class:`Worker`, submits it to the global ``QThreadPool`` and
+connects to the signals below to receive results, errors or cancellation
+notices on the main thread.
 """
 
-from typing import Any, Callable
-
 import traceback
+from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QRunnable, Signal
 
 
 class WorkerSignals(QObject):
-    """
-    Сигналы фоновой задачи.
+    """Qt signals emitted by a :class:`Worker`.
+
+    Attributes:
+        finished:  Always emitted when the worker ends (success/error/cancel).
+        error:     Emitted with a traceback string on unhandled exceptions.
+        result:    Emitted with the return value of the wrapped callable.
+        status:    Reserved for progress messages (not currently used).
+        cancelled: Emitted if the worker was cancelled before/while running.
     """
 
     finished = Signal()
@@ -26,11 +33,10 @@ class WorkerSignals(QObject):
 
 
 class Worker(QRunnable):
-    """
-    Универсальный worker для запуска функции в пуле потоков.
+    """A runnable that calls ``fn(*args, **kwargs)`` on a thread-pool thread.
 
-    После вызова cancel() вычисление не прерывается физически,
-    но его результат и ошибка больше не передаются в GUI.
+    Cancellation is cooperative: callers set a flag via :meth:`cancel` and
+    long-running callables may check :meth:`is_cancelled` to abort early.
     """
 
     def __init__(
@@ -39,14 +45,7 @@ class Worker(QRunnable):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """
-        Инициализирует worker.
-
-        Args:
-            fn: Функция для выполнения.
-            *args: Позиционные аргументы функции.
-            **kwargs: Именованные аргументы функции.
-        """
+        """Initialise the component."""
         super().__init__()
         self.fn = fn
         self.args = args
@@ -55,30 +54,16 @@ class Worker(QRunnable):
         self._cancelled = False
 
     def cancel(self) -> None:
-        """
-        Устанавливает флаг отмены.
-
-        Выполняемая функция продолжит работу до завершения,
-        но её результат будет проигнорирован.
-        """
+        """Request cancellation (cooperative; checked in :meth:`run`)."""
         self._cancelled = True
 
     def is_cancelled(self) -> bool:
-        """
-        Возвращает состояние флага отмены.
-
-        Returns:
-            True, если отмена была запрошена.
-        """
+        """Return whether cancellation has been requested."""
         return self._cancelled
 
     def run(self) -> None:
-        """
-        Выполняет функцию и отправляет результат через сигналы.
-
-        Если отмена была запрошена до завершения функции,
-        результат и ошибка не передаются.
-        """
+        """Execute the wrapped callable and emit the appropriate signal."""
+        # If the task was cancelled before it even started, short-circuit.
         if self._cancelled:
             self.signals.cancelled.emit()
             self.signals.finished.emit()
@@ -87,6 +72,8 @@ class Worker(QRunnable):
         try:
             result = self.fn(*self.args, **self.kwargs)
         except Exception:
+            # A race where the user cancels exactly during an exception: treat
+            # it as a cancellation rather than surfacing a traceback.
             if self._cancelled:
                 self.signals.cancelled.emit()
             else:

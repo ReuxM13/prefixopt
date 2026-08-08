@@ -1,10 +1,13 @@
 """
-Вкладка вычитания префиксов (hole punching).
+Exclude tab: subtract a single prefix or a whole target list from a source
+list (hole punching). Supports inheritance/appending of comments to fragments.
 """
+
 
 from typing import Any
 
 from PySide6.QtWidgets import (
+    QLineEdit,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -22,19 +25,21 @@ from ..services import run_exclude
 from ..widgets.input_panel import InputPanel
 from ..widgets.options_group import OptionsGroup
 from ..widgets.prefix_input_widget import PrefixInputWidget
+from ..widgets.comment_options import CommentAnnotationMixin
 from ..workers import Worker
 
 
-class ExcludeTab(BaseOperationTab):
-    """Вкладка вычитания префиксов из исходного списка."""
+class ExcludeTab(BaseOperationTab, CommentAnnotationMixin):
+
+    """Subtract networks from a source list (hole punching)."""
 
     def __init__(self) -> None:
-        """Инициализирует вкладку и создает элементы интерфейса."""
+        """Set up the widget, build its UI and wire up signals."""
         super().__init__()
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """Создает структуру вкладки."""
+        """Construct and lay out all child widgets for this tab."""
         desc = QLabel(
             "Subtract one target from a source list. "
             "Target may be a single prefix or a list."
@@ -82,6 +87,9 @@ class ExcludeTab(BaseOperationTab):
 
         options = OptionsGroup("Exclude options")
         self.keep_comments = QCheckBox("Keep comments")
+        self.append_comment = QLineEdit()
+        self.append_comment.setPlaceholderText("Optional comment for remaining fragments")
+        self.keep_existing_comments = QCheckBox("Keep existing comments and append to the end")
         self.ipv4_only = QCheckBox("IPv4 only")
         self.ipv6_only = QCheckBox("IPv6 only")
         self.output_format = QComboBox()
@@ -101,6 +109,8 @@ class ExcludeTab(BaseOperationTab):
 
         form = QFormLayout()
         form.addRow(self.keep_comments)
+        form.addRow("Append comment:", self.append_comment)
+        form.addRow(self.keep_existing_comments)
         form.addRow(self.ipv4_only)
         form.addRow(self.ipv6_only)
         form.addRow("Output format:", self.output_format)
@@ -120,6 +130,8 @@ class ExcludeTab(BaseOperationTab):
 
         self.single_target_radio.toggled.connect(self._update_target_mode)
         self.source_input.source_changed.connect(self._update_state)
+        self.keep_comments.toggled.connect(self._update_comment_options)
+        self.append_comment.textChanged.connect(self._update_comment_options)
         self.single_target_widget.value_changed.connect(self._update_state)
         self.multi_target_widget.source_changed.connect(self._update_state)
         self.run_button.clicked.connect(self._run_exclude)
@@ -128,15 +140,28 @@ class ExcludeTab(BaseOperationTab):
         self._update_state()
 
     def _update_target_mode(self) -> None:
-        """Переключает виджет ввода цели."""
         if self.single_target_radio.isChecked():
             self.target_stack.setCurrentWidget(self.single_target_widget)
         else:
             self.target_stack.setCurrentWidget(self.multi_target_widget)
         self._update_state()
 
+    def _update_comment_options(self, _: Any = None) -> None:
+        self.update_comment_options_state(
+            self.keep_comments.isChecked(), append_requires_keep=False
+        )
+        if (self.keep_comments.isChecked() or self.append_comment.text().strip()) and self.output_format.currentText() == "csv":
+            self.output_format.setCurrentText("list")
+        idx = self.output_format.findText("csv")
+        if idx >= 0:
+            model = self.output_format.model()
+            if model:
+                item = model.item(idx)
+                if item:
+                    item.setEnabled(not (self.keep_comments.isChecked() or bool(self.append_comment.text().strip())))
+
     def _update_state(self, _: Any = None) -> None:
-        """Обновляет доступность кнопки запуска."""
+        """Enable/disable the Run button based on current input validity."""
         source_ok = self.source_input.get_data_source() is not None
         if self.single_target_radio.isChecked():
             target_ok = self.single_target_widget.get_value() is not None
@@ -145,7 +170,7 @@ class ExcludeTab(BaseOperationTab):
         self.run_button.setEnabled(source_ok and target_ok)
 
     def _run_exclude(self) -> None:
-        """Собирает параметры и запускает вычитание в фоновом потоке."""
+        """Collect options and launch the background worker."""
         source = self.source_input.get_data_source()
         if source is None:
             return
@@ -159,11 +184,13 @@ class ExcludeTab(BaseOperationTab):
             return
 
         keep_comments = self.keep_comments.isChecked()
+        append_comment = self.get_append_comment()
+        keep_existing = self.keep_existing_comments.isChecked()
         fmt = self.output_format.currentText()
 
-        if keep_comments and fmt == "csv":
+        if (keep_comments or append_comment) and fmt == "csv":
             self.output_panel.set_text(
-                "Error: Cannot use keep-comments with CSV format."
+                "Error: Cannot use comments with CSV format."
             )
             self.progress_panel.set_status("Error")
             return
@@ -174,6 +201,8 @@ class ExcludeTab(BaseOperationTab):
             target,
             fmt,
             keep_comments=keep_comments,
+            append_comment=append_comment,
+            keep_existing_comments=keep_existing,
             ipv4_only=self.ipv4_only.isChecked(),
             ipv6_only=self.ipv6_only.isChecked(),
             strict=self.strict.isChecked(),
@@ -183,37 +212,30 @@ class ExcludeTab(BaseOperationTab):
         self._start_worker(worker, "Excluding...")
 
     def _on_exclude_result(self, result: ExcludeResult) -> None:
-        """
-        Отображает результат вычитания.
-
-        Args:
-            result: Результат с готовой строкой formatted_text.
-        """
+        """Handle the exclude result event."""
         self._expand_output()
         self.output_panel.set_text(result.formatted_text)
         self.progress_panel.set_status(
             f"Done. Fragments: {result.total_count}"
         )
+        result.commented_prefixes.clear()
 
     def trigger_open(self) -> None:
-        """Открывает диалог выбора файла для источника."""
+        """Programmatically open a file for this tab (used by Ctrl+O)."""
         self.source_input.browse_button.click()
 
     def trigger_run(self) -> None:
-        """Запускает вычитание."""
+        """Programmatically run this tab's operation (used by Ctrl+R)."""
         if self.run_button.isEnabled():
             self.run_button.click()
 
     def save_settings(self) -> dict:
-        """
-        Сохраняет параметры вкладки.
-
-        Returns:
-            Словарь с настройками.
-        """
+        """Serialise this tab's widget state for persistence."""
         return {
             "single_target": self.single_target_radio.isChecked(),
             "keep_comments": self.keep_comments.isChecked(),
+            "append_comment": self.append_comment.text(),
+            "keep_existing_comments": self.keep_existing_comments.isChecked(),
             "ipv4_only": self.ipv4_only.isChecked(),
             "ipv6_only": self.ipv6_only.isChecked(),
             "output_format": self.output_format.currentText(),
@@ -221,12 +243,7 @@ class ExcludeTab(BaseOperationTab):
         }
 
     def load_settings(self, state: dict) -> None:
-        """
-        Восстанавливает параметры вкладки.
-
-        Args:
-            state: Словарь с настройками.
-        """
+        """Restore widget state previously saved by save_settings."""
         if not state:
             return
         if state.get("single_target", True):
@@ -234,6 +251,8 @@ class ExcludeTab(BaseOperationTab):
         else:
             self.multi_target_radio.setChecked(True)
         self.keep_comments.setChecked(state.get("keep_comments", False))
+        self.append_comment.setText(state.get("append_comment", ""))
+        self.keep_existing_comments.setChecked(state.get("keep_existing_comments", False))
         self.ipv4_only.setChecked(state.get("ipv4_only", False))
         self.ipv6_only.setChecked(state.get("ipv6_only", False))
         fmt = state.get("output_format", "list")

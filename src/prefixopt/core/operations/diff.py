@@ -1,27 +1,36 @@
 """
-Модуль вычисления разницы (Diff) между наборами префиксов.
+Semantic diff between two optimised prefix sets.
+
+The CLI's ``diff`` command first fully optimises both inputs (sort, remove
+nested, aggregate), then hands the canonical representations here. This means
+two lists that cover the same address space but use different CIDR boundaries
+(e.g. one /23 versus two /24s) will compare as equal.
 """
+
 from typing import Iterable, Set, Tuple
+
 from ..ip_utils import IPNet
+
 
 def calculate_diff(
     prefixes_new: Iterable[IPNet],
-    prefixes_old: Iterable[IPNet]
+    prefixes_old: Iterable[IPNet],
 ) -> Tuple[Set[IPNet], Set[IPNet], Set[IPNet]]:
-    """
-    Calculates the difference between two sets of networks.
+    """Return ``(added, removed, unchanged)`` between two sets.
+
+    Because both inputs are expected to be canonical (optimised), a plain set
+    difference is sufficient to express the semantic change.
 
     Args:
-        prefixes_new: Новый список (целевое состояние).
-        prefixes_old: Старый список (текущее состояние).
+        prefixes_new: Optimised representation of the new list.
+        prefixes_old: Optimised representation of the old list.
 
     Returns:
-        Кортеж из трех множеств:
-        1. Added (есть в new, нет в old)
-        2. Removed (есть в old, нет в new)
-        3. Unchanged (есть в обоих)
+        A tuple of three sets:
+            added     - networks present only in ``prefixes_new``.
+            removed   - networks present only in ``prefixes_old``.
+            unchanged - networks present in both.
     """
-    # Материализуем в множества для быстрой математики
     set_new = set(prefixes_new)
     set_old = set(prefixes_old)
 

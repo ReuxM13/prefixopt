@@ -1,10 +1,14 @@
 """
-Модуль фильтрации.
+Filter out "special" IP ranges (private, loopback, multicast, reserved, ...).
 
-Содержит функции для фильтрации IP-сетей (частные, зарезервированные, multicast и т.д.).
-Реализован как ленивый генератор для максимальной производительности и экономии памяти.
+This is implemented as a lazy generator so very large lists can be streamed
+without materialising them. It delegates the actual classification to
+attributes already provided by the standard-library :mod:`ipaddress` module
+(``is_private``, ``is_loopback``, etc.).
 """
+
 from typing import Iterable, Iterator, Union
+
 from ipaddress import IPv4Network, IPv6Network
 
 
@@ -15,50 +19,41 @@ def filter_special(
     exclude_link_local: bool = False,
     exclude_multicast: bool = False,
     exclude_reserved: bool = False,
-    exclude_unspecified: bool = False
+    exclude_unspecified: bool = False,
 ) -> Iterator[Union[IPv4Network, IPv6Network]]:
-    """
-    Filters IP networks, excluding special ranges.
-
-    Функция работает как генератор: она берет элементы из входного итератора
-    и отдает их (yield) только если они проходят все проверки. Это позволяет
-    обрабатывать списки любого размера без загрузки в память.
+    """Yield networks that pass all the enabled exclusion filters.
 
     Args:
-        networks: Итератор или список объектов IPv4Network/IPv6Network.
-        exclude_private: Исключить частные сети (RFC 1918, ULA).
-        exclude_loopback: Исключить Loopback (127.0.0.0/8, ::1).
-        exclude_link_local: Исключить Link-Local (169.254.x.x, fe80::).
-        exclude_multicast: Исключить Multicast (224.0.0.0/4, ff00::/8).
-        exclude_reserved: Исключить зарезервированные IETF диапазоны.
-        exclude_unspecified: Исключить "unspecified" адреса (0.0.0.0, ::) и дефолтные маршруты (/0).
+        networks:           Input networks.
+        exclude_private:    Drop RFC1918 (IPv4) / ULA (IPv6) networks.
+        exclude_loopback:   Drop loopback networks.
+        exclude_link_local: Drop link-local networks.
+        exclude_multicast:  Drop multicast networks.
+        exclude_reserved:   Drop IETF-reserved networks.
+        exclude_unspecified:Drop 0.0.0.0/:: hosts *and* default routes
+                            (prefix length 0).
 
     Yields:
-        Объекты IP сетей, прошедшие фильтрацию.
+        Networks that were not excluded.
     """
     for network in networks:
-        # Проверка свойств сети через атрибуты ipaddress
-        
+        # Each check is independent - order doesn't matter, but we short-circuit
+        # as soon as one flag rejects the network.
         if exclude_private and network.is_private:
             continue
-
         if exclude_loopback and network.is_loopback:
             continue
-
         if exclude_link_local and network.is_link_local:
             continue
-
         if exclude_multicast and network.is_multicast:
             continue
-
         if exclude_reserved and network.is_reserved:
             continue
-
-        # Проверка на Unspecified (0.0.0.0, ::) и Default Route (0.0.0.0/0, ::/0)
-        # network.is_unspecified обычно истинно только для адреса 0.0.0.0, но не для сети /0.
-        # Поэтому добавляем проверку prefixlen == 0.
-        if exclude_unspecified and (network.is_unspecified or network.prefixlen == 0):
+        # prefixlen == 0 catches the default route 0.0.0.0/0 and ::/0 which
+        # is_unspecified alone does not classify.
+        if exclude_unspecified and (
+            network.is_unspecified or network.prefixlen == 0
+        ):
             continue
 
-        # Если сеть прошла все фильтры, возвращаем её в поток
         yield network

@@ -1,9 +1,12 @@
 """
-Инициализация и запуск GUI-приложения.
+QApplication bootstrap for the desktop GUI.
 
-Определяет системную тему оформления, применяет глобальную стилизацию
-и настраивает иконку приложения.
+Responsibilities: apply the dark/light stylesheet, set application metadata,
+create the :class:`MainWindow`, wire up global keyboard shortcuts and run the
+Qt event loop. The :func:`run_gui` function is called by the ``prefixopt gui``
+CLI command.
 """
+
 
 import logging
 import sys
@@ -18,11 +21,6 @@ logger = logging.getLogger("prefixopt.gui.app")
 
 
 def _set_windows_app_id() -> None:
-    """
-    Устанавливает AppUserModelID для Windows.
-
-    Должен вызываться до создания QApplication.
-    """
     if sys.platform != "win32":
         return
 
@@ -36,14 +34,6 @@ def _set_windows_app_id() -> None:
 
 
 def _get_icon_path() -> Path | None:
-    """
-    Возвращает путь к иконке приложения.
-
-    На Windows приоритет отдается .ico, на остальных — .png.
-
-    Returns:
-        Путь к файлу иконки или None.
-    """
     base_dir = Path(__file__).parent
 
     if sys.platform == "win32":
@@ -59,12 +49,6 @@ def _get_icon_path() -> Path | None:
 
 
 def _is_dark_theme_windows() -> bool:
-    """
-    Определяет тёмную тему Windows через реестр.
-
-    Returns:
-        True, если активна тёмная тема Windows.
-    """
     try:
         import winreg
         key = winreg.OpenKey(
@@ -79,15 +63,6 @@ def _is_dark_theme_windows() -> bool:
 
 
 def _is_dark_theme(app: QApplication) -> bool:
-    """
-    Определяет текущую системную тему.
-
-    Args:
-        app: Экземпляр приложения.
-
-    Returns:
-        True, если активна тёмная тема.
-    """
     if sys.platform == "win32":
         return _is_dark_theme_windows()
 
@@ -97,12 +72,6 @@ def _is_dark_theme(app: QApplication) -> bool:
 
 
 def _apply_dark_palette(app: QApplication) -> None:
-    """
-    Применяет тёмную палитру через Fusion.
-
-    Args:
-        app: Экземпляр приложения.
-    """
     app.setStyle("Fusion")
 
     palette = QPalette()
@@ -126,12 +95,6 @@ def _apply_dark_palette(app: QApplication) -> None:
 
 
 def _apply_light_palette(app: QApplication) -> None:
-    """
-    Применяет светлую палитру через Fusion.
-
-    Args:
-        app: Экземпляр приложения.
-    """
     app.setStyle("Fusion")
 
     palette = QPalette()
@@ -155,15 +118,6 @@ def _apply_light_palette(app: QApplication) -> None:
 
 
 def _build_stylesheet(dark: bool) -> str:
-    """
-    Формирует глобальный stylesheet.
-
-    Args:
-        dark: True для тёмной темы.
-
-    Returns:
-        CSS-строка.
-    """
     if dark:
         c = {
             "bg": "#1e1e1e",
@@ -574,7 +528,7 @@ def _build_stylesheet(dark: bool) -> str:
 
 
 def run_gui() -> None:
-    """Точка входа для запуска графического интерфейса."""
+    """Create the QApplication, main window and start the event loop."""
     _set_windows_app_id()
 
     app = QApplication.instance() or QApplication(sys.argv)

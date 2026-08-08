@@ -1,90 +1,74 @@
 """
-Модуль для агрегации IP-сетей.
+CIDR aggregation: merge adjacent networks into their common supernet.
 
-Предоставляет функции для объединения (схлопывания) смежных подсетей
-в более крупные блоки (суперсети). Использует оптимизированный стековый
-алгоритм с линейной сложностью O(N).
+Example:
+    Input:   [192.168.0.0/24, 192.168.1.0/24]
+    Output:  [192.168.0.0/23]
+
+The implementation is the classic "CIDR stack" algorithm. Networks must be
+sorted broadest-first (see :mod:`sorter`). Each new network is pushed onto a
+stack; while the top two entries are siblings (same prefix length, contiguous
+address ranges, aligned so they together form a valid supernet), they are
+popped and replaced by that supernet. This is repeated because the resulting
+supernet may itself be sibling to the next item down.
+
+Worst-case complexity is O(N) because every network is pushed and popped at
+most once.
 """
-from typing import List, Union, Iterable
+
+from typing import Iterable, List, Union
 
 from ipaddress import IPv4Network, IPv6Network
 
 
 def aggregate(
-    networks: Iterable[Union[IPv4Network, IPv6Network]]
+    networks: Iterable[Union[IPv4Network, IPv6Network]],
 ) -> List[Union[IPv4Network, IPv6Network]]:
-    """
-    Aggregates adjacent networks in a list.
-
-    Объединяет соседние подсети одинакового размера в более крупные, если это возможно
-    по правилам бинарной арифметики (выравнивание). Например, две сети /24 могут
-    быть объединены в одну /23.
-
-    Алгоритм:
-        Используется стековый подход O(N). Проходим по отсортированному списку,
-        складываем элементы в стек и рекурсивно пытаемся объединить вершину стека
-        с предыдущим элементом.
-
-    Требования:
-        Входные данные ДОЛЖНЫ быть:
-        1. Отсортированы (по адресу).
-        2. Очищены от вложенностей (remove_nested).
-        Если эти условия не выполнены, агрегация будет неполной или некорректной.
+    """Aggregate adjacent, equal-length networks into supernets.
 
     Args:
-        networks: Итератор или список объектов IPv4Network/IPv6Network.
+        networks: Sorted iterable of networks (broadest-first). The function
+                  does not sort internally - callers that need robust
+                  behaviour should sort first.
 
     Returns:
-        Список агрегированных (минимально возможных) сетей.
+        A new, potentially shorter list of networks.
     """
+    # The stack holds the partially-aggregated prefixes in order.
     stack: List[Union[IPv4Network, IPv6Network]] = []
 
     for net in networks:
-        # Добавляем новую сеть на вершину стека
         stack.append(net)
 
-        # Пытаемся схлопнуть верхушку стека вниз, пока это возможно
-        # (Рекурсивное объединение снизу вверх)
+        # Collapse the top of the stack as much as possible.
         while len(stack) >= 2:
-            right = stack[-1]  # Последняя добавленная (верхняя)
-            left = stack[-2]   # Предпоследняя
+            right = stack[-1]
+            left = stack[-2]
 
-            # 1. Проверка совместимости протоколов и масок
-            # Объединять можно только сети одной версии и одинакового размера
+            # Siblings must be the same protocol and same prefix length.
             if left.version != right.version or left.prefixlen != right.prefixlen:
                 break
 
-            # 2. Проверка смежности
-            # Конец левой сети + 1 должен быть равен началу правой
-            # Используем int() для получения числового представления адреса
+            # They must be contiguous: left's broadcast immediately precedes
+            # right's network address.
             if int(left.broadcast_address) + 1 != int(right.network_address):
                 break
 
-            # 3. Проверка выравнивания
-            # Две /24 могут склеиться в /23 только если они образуют корректный блок.
-            # Левая сеть должна быть началом этого блока (четной).
             try:
-                # Пытаемся получить суперсеть (уменьшаем маску на 1 бит)
                 supernet = left.supernet(prefixlen_diff=1)
-                
-                # Если адрес суперсети совпадает с адресом левой подсети,
-                # значит левая подсеть является корректным началом блока.
+
+                # Only merge if left is the first half of the supernet; this
+                # guards against merging across alignment boundaries.
                 if supernet.network_address == left.network_address:
-                    # Успешное объединение:
-                    stack.pop() # Убираем right
-                    stack.pop() # Убираем left
-                    stack.append(supernet) # Кладем объединенную суперсеть
-                    
-                    # continue возвращает нас в начало while, чтобы проверить, 
-                    # не склеится ли новая суперсеть с тем, что лежит под ней в стеке.
-                    continue 
+                    stack.pop()
+                    stack.pop()
+                    stack.append(supernet)
+                    # Loop again: the new supernet may now pair with its sibling.
+                    continue
             except (ValueError, IndexError):
-                # ValueError: если сеть /0 и нельзя расширить.
-                # IndexError: защита от неожиданных ошибок ipaddress.
+                # supernet() raises for /0; in that case there is nothing to do.
                 pass
-            
-            # Если ни одно условие объединения не сработало - прерываем цикл сжатия
-            # для текущего элемента и переходим к следующему из входного потока.
+
             break
 
     return stack

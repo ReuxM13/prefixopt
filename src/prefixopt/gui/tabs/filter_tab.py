@@ -1,12 +1,13 @@
 """
-Вкладка фильтрации списков префиксов.
-
-Удаляет private, loopback, multicast, reserved и bogon префиксы.
+Filter tab: remove special-use networks (private, loopback, bogons, ...) from a
+source list, with optional comment annotation of the surviving prefixes.
 """
+
 
 from typing import Any
 
 from PySide6.QtWidgets import (
+    QLineEdit,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -20,19 +21,21 @@ from ..models import FilterResult
 from ..services import run_filter
 from ..widgets.input_panel import InputPanel
 from ..widgets.options_group import OptionsGroup
+from ..widgets.comment_options import CommentAnnotationMixin
 from ..workers import Worker
 
 
-class FilterTab(BaseOperationTab):
-    """Вкладка фильтрации списков префиксов."""
+class FilterTab(BaseOperationTab, CommentAnnotationMixin):
+
+    """Remove special-use networks (bogons, private, loopback, ...)."""
 
     def __init__(self) -> None:
-        """Инициализирует вкладку и создает элементы интерфейса."""
+        """Set up the widget, build its UI and wire up signals."""
         super().__init__()
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """Создает структуру вкладки."""
+        """Construct and lay out all child widgets for this tab."""
         desc = QLabel(
             "Filter out private, loopback, multicast, reserved "
             "and bogon prefixes."
@@ -73,6 +76,12 @@ class FilterTab(BaseOperationTab):
         self.bogons = QCheckBox("Bogons (all of the above)")
         self.bogons.setToolTip("Remove all of the above categories at once")
 
+        self.keep_comments = QCheckBox("Keep comments")
+        self.keep_comments.setToolTip("Preserve line comments for prefixes that remain")
+        self.append_comment = QLineEdit()
+        self.append_comment.setPlaceholderText("Optional comment for all remaining prefixes")
+        self.keep_existing_comments = QCheckBox("Keep existing comments and append to the end")
+
         self.output_format = QComboBox()
         self.output_format.addItems(["list", "csv"])
         self.output_format.setToolTip(
@@ -91,6 +100,9 @@ class FilterTab(BaseOperationTab):
         form.addRow(self.no_multicast)
         form.addRow(self.no_reserved)
         form.addRow(self.bogons)
+        form.addRow(self.keep_comments)
+        form.addRow("Append comment:", self.append_comment)
+        form.addRow(self.keep_existing_comments)
         form.addRow("Output format:", self.output_format)
         form.addRow(self.strict)
         options.add_layout(form)
@@ -108,22 +120,33 @@ class FilterTab(BaseOperationTab):
 
         self.run_button.clicked.connect(self._run_filter)
         self.input_panel.source_changed.connect(self._update_state)
+        self.keep_comments.toggled.connect(self._update_comment_options)
+        self.append_comment.textChanged.connect(self._update_comment_options)
         self.bogons.toggled.connect(self._on_bogons_toggled)
         self._update_state()
 
     def _update_state(self, _: Any = None) -> None:
-        """Обновляет доступность кнопки запуска."""
+        """Enable/disable the Run button based on current input validity."""
         self.run_button.setEnabled(
             self.input_panel.get_data_source() is not None
         )
 
-    def _on_bogons_toggled(self, checked: bool) -> None:
-        """
-        Блокирует индивидуальные чекбоксы при активации bogons.
+    def _update_comment_options(self, _: Any = None) -> None:
+        self.update_comment_options_state(
+            self.keep_comments.isChecked(), append_requires_keep=False
+        )
+        if (self.keep_comments.isChecked() or self.append_comment.text().strip()) and self.output_format.currentText() == "csv":
+            self.output_format.setCurrentText("list")
+        idx = self.output_format.findText("csv")
+        if idx >= 0:
+            model = self.output_format.model()
+            if model:
+                item = model.item(idx)
+                if item:
+                    item.setEnabled(not (self.keep_comments.isChecked() or bool(self.append_comment.text().strip())))
 
-        Args:
-            checked: Состояние чекбокса bogons.
-        """
+    def _on_bogons_toggled(self, checked: bool) -> None:
+        """Handle the bogons toggled event."""
         self.no_private.setEnabled(not checked)
         self.no_loopback.setEnabled(not checked)
         self.no_link_local.setEnabled(not checked)
@@ -131,12 +154,19 @@ class FilterTab(BaseOperationTab):
         self.no_reserved.setEnabled(not checked)
 
     def _run_filter(self) -> None:
-        """Собирает параметры и запускает фильтрацию в фоновом потоке."""
+        """Collect options and launch the background worker."""
         source = self.input_panel.get_data_source()
         if source is None:
             return
 
         fmt = self.output_format.currentText()
+        keep_comments = self.keep_comments.isChecked()
+        append_comment = self.get_append_comment()
+        keep_existing = self.keep_existing_comments.isChecked()
+        if (keep_comments or append_comment) and fmt == "csv":
+            self.output_panel.set_text("Error: Cannot use comments with CSV format.")
+            self.progress_panel.set_status("Error")
+            return
 
         worker = Worker(
             run_filter,
@@ -148,6 +178,9 @@ class FilterTab(BaseOperationTab):
             self.no_multicast.isChecked() or self.bogons.isChecked(),
             self.no_reserved.isChecked() or self.bogons.isChecked(),
             self.bogons.isChecked(),
+            keep_comments,
+            append_comment,
+            keep_existing,
             self.strict.isChecked(),
         )
         worker.signals.result.connect(self._on_filter_result)
@@ -155,12 +188,7 @@ class FilterTab(BaseOperationTab):
         self._start_worker(worker, "Running filter...")
 
     def _on_filter_result(self, result: FilterResult) -> None:
-        """
-        Отображает результат фильтрации.
-
-        Args:
-            result: Результат с готовой строкой formatted_text.
-        """
+        """Handle the filter result event."""
         self._expand_output()
         self.output_panel.set_text(result.formatted_text)
         remaining = result.original_count - result.removed_count
@@ -168,23 +196,20 @@ class FilterTab(BaseOperationTab):
             f"Done. Removed: {result.removed_count}, "
             f"Remaining: {remaining}"
         )
+        # Free the intermediate list after rendering.
+        result.prefixes.clear()
 
     def trigger_open(self) -> None:
-        """Открывает диалог выбора файла."""
+        """Programmatically open a file for this tab (used by Ctrl+O)."""
         self.input_panel.browse_button.click()
 
     def trigger_run(self) -> None:
-        """Запускает фильтрацию."""
+        """Programmatically run this tab's operation (used by Ctrl+R)."""
         if self.run_button.isEnabled():
             self.run_button.click()
 
     def save_settings(self) -> dict:
-        """
-        Сохраняет параметры вкладки.
-
-        Returns:
-            Словарь с настройками.
-        """
+        """Serialise this tab's widget state for persistence."""
         return {
             "no_private": self.no_private.isChecked(),
             "no_loopback": self.no_loopback.isChecked(),
@@ -192,17 +217,15 @@ class FilterTab(BaseOperationTab):
             "no_multicast": self.no_multicast.isChecked(),
             "no_reserved": self.no_reserved.isChecked(),
             "bogons": self.bogons.isChecked(),
+            "keep_comments": self.keep_comments.isChecked(),
+            "append_comment": self.append_comment.text(),
+            "keep_existing_comments": self.keep_existing_comments.isChecked(),
             "output_format": self.output_format.currentText(),
             "strict": self.strict.isChecked(),
         }
 
     def load_settings(self, state: dict) -> None:
-        """
-        Восстанавливает параметры вкладки.
-
-        Args:
-            state: Словарь с настройками.
-        """
+        """Restore widget state previously saved by save_settings."""
         if not state:
             return
         self.no_private.setChecked(state.get("no_private", False))
@@ -211,6 +234,9 @@ class FilterTab(BaseOperationTab):
         self.no_multicast.setChecked(state.get("no_multicast", False))
         self.no_reserved.setChecked(state.get("no_reserved", False))
         self.bogons.setChecked(state.get("bogons", False))
+        self.keep_comments.setChecked(state.get("keep_comments", False))
+        self.append_comment.setText(state.get("append_comment", ""))
+        self.keep_existing_comments.setChecked(state.get("keep_existing_comments", False))
         fmt = state.get("output_format", "list")
         idx = self.output_format.findText(fmt)
         if idx >= 0:

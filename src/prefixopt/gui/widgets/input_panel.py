@@ -1,23 +1,47 @@
 """
-Универсальная панель выбора одного источника данных с возможностью отделения и списком недавних файлов.
+InputPanel: a reusable source selector used by every operation tab.
+
+It supports two input modes:
+    * File mode - a path selected via Browse, the Recent menu, or drag-and-drop.
+    * Text mode - a free-form text area for pasting prefixes directly.
+
+The panel exposes :meth:`get_data_source`, which returns either a ``Path``
+(file mode) or a ``str`` (text mode). That value is then consumed by
+:mod:`prefixopt.gui.services`, which knows how to load either kind of source.
 """
+
 from pathlib import Path
 from typing import Optional, Union
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QRadioButton,
-    QButtonGroup, QFileDialog, QLineEdit, QPlainTextEdit, QStackedWidget, QGroupBox,
-    QMenu
+    QButtonGroup,
+    QFileDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QPlainTextEdit,
+    QPushButton,
+    QRadioButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
-from .detachable_manager import DetachableWidgetManager
 from ..settings_manager import SettingsManager
+from .detachable_manager import DetachableWidgetManager
 
+# Type returned by get_data_source: a file path, raw text, or None if empty.
 InputSource = Union[Path, str, None]
 
 
 class InputPanel(QWidget):
+    """Widget for picking a prefix source (file or pasted text)."""
+
+    # Emitted whenever the selected source changes (mode switch, file chosen,
+    # text edited, etc.). Tabs use it to enable/disable the Run button.
     source_changed = Signal()
 
     def __init__(
@@ -27,6 +51,7 @@ class InputPanel(QWidget):
         text_placeholder: str = "Paste prefixes here...",
         parent: Optional[QWidget] = None,
     ) -> None:
+        """Initialise the component."""
         super().__init__(parent)
         self._title = title
         self._file_label = file_label
@@ -38,31 +63,35 @@ class InputPanel(QWidget):
         self._init_ui()
 
     def title(self) -> str:
+        """Return the panel's current group-box title."""
         return self._group_box.title() if self._group_box else self._title
 
     def set_title(self, new_title: str) -> None:
-        """Меняет заголовок группы."""
+        """Update the panel's title (used to show a selected file name)."""
         if self._group_box:
             self._group_box.setTitle(new_title)
 
     def display_name(self) -> Optional[str]:
-        """Возвращает имя файла (без пути), если выбран файл, иначе None."""
+        """Return the file name of the selected file, or None in text mode."""
         if self._selected_file:
             return self._selected_file.name
         return None
 
     def _init_ui(self) -> None:
+        """Build the child widgets and layout."""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
         self._group_box = QGroupBox(self._title)
         group_layout = QVBoxLayout(self._group_box)
 
+        # Top-right "pop out" button that detaches the panel into a window.
         toolbar = QHBoxLayout()
         toolbar.addStretch()
         self._detach_btn = QPushButton("↗ Pop out")
         toolbar.addWidget(self._detach_btn)
 
+        # Mode switch: File vs Text.
         mode_layout = QHBoxLayout()
         self.file_mode_radio = QRadioButton("File")
         self.text_mode_radio = QRadioButton("Text")
@@ -77,8 +106,10 @@ class InputPanel(QWidget):
         mode_layout.addWidget(self.text_mode_radio)
         mode_layout.addStretch()
 
+        # QStackedWidget shows either the file page or the text page.
         self.stack = QStackedWidget()
 
+        # ---- File page ----
         self.file_page = QWidget()
         file_layout = QVBoxLayout(self.file_page)
 
@@ -104,11 +135,13 @@ class InputPanel(QWidget):
         file_layout.addLayout(file_row)
         file_layout.addWidget(self.drop_hint)
 
+        # ---- Text page ----
         self.text_page = QWidget()
         text_layout = QVBoxLayout(self.text_page)
 
         self.text_edit = QPlainTextEdit()
         self.text_edit.setPlaceholderText(self._text_placeholder)
+        # Any keystroke counts as a source change.
         self.text_edit.textChanged.connect(self.source_changed.emit)
 
         text_layout.addWidget(self.text_edit)
@@ -122,12 +155,15 @@ class InputPanel(QWidget):
         root.addWidget(self._group_box)
 
         self.file_mode_radio.toggled.connect(self._update_mode)
+        # Enable OS drag-and-drop of files onto the panel.
         self.setAcceptDrops(True)
         self._update_mode()
 
+        # The detach manager handles the pop-out/in behaviour.
         self._detach_manager = DetachableWidgetManager(self, self._detach_btn)
 
     def _update_mode(self) -> None:
+        """Switch the stacked page based on the selected radio button."""
         if self.file_mode_radio.isChecked():
             self.stack.setCurrentWidget(self.file_page)
         else:
@@ -135,11 +171,13 @@ class InputPanel(QWidget):
         self.source_changed.emit()
 
     def _browse_file(self) -> None:
+        """Open a file dialog and select a file."""
         file_name, _ = QFileDialog.getOpenFileName(self, "Select file")
         if file_name:
             self.set_file(Path(file_name))
 
     def _show_recent_menu(self) -> None:
+        """Pop up the recent-files menu under the Recent button."""
         menu = QMenu(self)
         recent_files = SettingsManager.instance().recent_files()
         if not recent_files:
@@ -147,28 +185,46 @@ class InputPanel(QWidget):
         else:
             for path_str in recent_files:
                 action = menu.addAction(path_str)
-                action.triggered.connect(lambda checked, p=path_str: self.set_file(Path(p)))
-        menu.exec(self.recent_button.mapToGlobal(self.recent_button.rect().bottomLeft()))
+                # Default-arg capture is needed to bind the correct path in
+                # the loop's lambda.
+                action.triggered.connect(
+                    lambda checked, p=path_str: self.set_file(Path(p))
+                )
+        menu.exec(
+            self.recent_button.mapToGlobal(
+                self.recent_button.rect().bottomLeft()
+            )
+        )
 
     def set_file(self, path: Path) -> None:
+        """Programmatically select a file and record it in recent files."""
         self._selected_file = path
         self.file_path_edit.setText(str(path))
         SettingsManager.instance().add_recent_file(str(path))
         self.source_changed.emit()
 
     def get_data_source(self) -> InputSource:
+        """Return the current source for use by the service layer.
+
+        Returns a Path in file mode, a non-empty string in text mode, or
+        None when no source is configured.
+        """
         if self.file_mode_radio.isChecked():
             return self._selected_file
         text = self.text_edit.toPlainText().strip()
         return text if text else None
 
     def clear(self) -> None:
+        """Reset the panel to an empty state."""
         self._selected_file = None
         self.file_path_edit.clear()
         self.text_edit.clear()
         self.source_changed.emit()
 
+    # ---- Drag and drop ----
+
     def dragEnterEvent(self, event) -> None:
+        """Accept a drag only when it carries a single local file."""
         mime = event.mimeData()
         if mime.hasUrls():
             urls = mime.urls()
@@ -178,6 +234,7 @@ class InputPanel(QWidget):
         event.ignore()
 
     def dropEvent(self, event) -> None:
+        """Handle a dropped file by switching to file mode and selecting it."""
         urls = event.mimeData().urls()
         if urls and urls[0].isLocalFile():
             self.file_mode_radio.setChecked(True)
@@ -185,23 +242,16 @@ class InputPanel(QWidget):
             event.acceptProposedAction()
         else:
             event.ignore()
-    def set_text_content(self, text: str) -> None:
-        """
-        Переключает панель в текстовый режим и устанавливает содержимое.
 
-        Args:
-            text: Текст для заполнения текстового поля.
-        """
+    def set_text_content(self, text: str) -> None:
+        """Switch to text mode and fill the text area with ``text``."""
         self.text_mode_radio.setChecked(True)
         self.text_edit.setPlainText(text)
 
-    def save_state(self) -> dict:
-        """
-        Сохраняет полное состояние панели (режим, файл, текст).
+    # ---- State save/restore (used by swap and settings) ----
 
-        Returns:
-            Словарь с состоянием панели.
-        """
+    def save_state(self) -> dict:
+        """Serialise the panel's state to a plain dictionary."""
         return {
             "is_file_mode": self.file_mode_radio.isChecked(),
             "selected_file": self._selected_file,
@@ -210,16 +260,10 @@ class InputPanel(QWidget):
         }
 
     def restore_state(self, state: dict) -> None:
-        """
-        Восстанавливает состояние панели без лишних сигналов.
-
-        Блокирует сигнал source_changed на время восстановления,
-        затем эмитит его однократно.
-
-        Args:
-            state: Словарь состояния, полученный из save_state().
-        """
+        """Restore state previously produced by :meth:`save_state`."""
         try:
+            # Block signals while restoring so we don't fire source_changed
+            # repeatedly for every intermediate widget update.
             self.text_edit.blockSignals(True)
             self.file_mode_radio.blockSignals(True)
             self.text_mode_radio.blockSignals(True)

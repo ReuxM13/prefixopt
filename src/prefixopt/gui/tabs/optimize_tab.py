@@ -1,14 +1,13 @@
 """
-Вкладка оптимизации списков префиксов.
-
-Поддерживает два режима: полная оптимизация списка
-и добавление нового префикса с реоптимизацией.
-Режимы визуально разделены вложенными вкладками.
+Optimize tab: combines two sub-modes in nested tabs - "Optimize list" and
+"Add prefix". Reuses the same output panel and comment options.
 """
+
 
 from typing import Any
 
 from PySide6.QtWidgets import (
+    QLineEdit,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -26,19 +25,21 @@ from ..services import run_add, run_optimize
 from ..widgets.input_panel import InputPanel
 from ..widgets.options_group import OptionsGroup
 from ..widgets.prefix_input_widget import PrefixInputWidget
+from ..widgets.comment_options import CommentAnnotationMixin
 from ..workers import Worker
 
 
-class OptimizeTab(BaseOperationTab):
-    """Вкладка оптимизации списков префиксов и добавления нового префикса."""
+class OptimizeTab(BaseOperationTab, CommentAnnotationMixin):
+
+    """Optimise (and add prefixes to) a list, with comment options."""
 
     def __init__(self) -> None:
-        """Инициализирует вкладку и создает элементы интерфейса."""
+        """Set up the widget, build its UI and wire up signals."""
         super().__init__()
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """Создает структуру вкладки с вложенными вкладками режимов."""
+        """Construct and lay out all child widgets for this tab."""
         desc = QLabel(
             "Optimize prefix lists or add a new prefix into an existing list."
         )
@@ -60,7 +61,6 @@ class OptimizeTab(BaseOperationTab):
         self._setup_splitter(self.output_panel)
 
     def _build_optimize_mode(self) -> None:
-        """Создает страницу режима полной оптимизации."""
         self.optimize_page = QWidget()
         layout = QVBoxLayout(self.optimize_page)
 
@@ -86,6 +86,15 @@ class OptimizeTab(BaseOperationTab):
         self.opt_keep_comments.setToolTip(
             "Preserve line comments (#). Disables aggregation and CSV output"
         )
+        self.opt_append_comment = QLineEdit()
+        self.opt_append_comment.setPlaceholderText("Optional comment for all output prefixes")
+        self.opt_append_comment.setToolTip(
+            "Append this comment to output. Existing comments are replaced unless the next option is checked."
+        )
+        self.opt_keep_existing_comments = QCheckBox("Keep existing comments and append to the end")
+        self.opt_keep_existing_comments.setToolTip(
+            "Preserve old comments and place the new comment after them"
+        )
 
         self.opt_strict = QCheckBox("Strict")
         self.opt_strict.setToolTip(
@@ -103,6 +112,8 @@ class OptimizeTab(BaseOperationTab):
         form.addRow(self.opt_ipv4_only)
         form.addRow(self.opt_ipv6_only)
         form.addRow(self.opt_keep_comments)
+        form.addRow("Append comment:", self.opt_append_comment)
+        form.addRow(self.opt_keep_existing_comments)
         form.addRow(self.opt_strict)
         form.addRow("Output format:", self.opt_format)
 
@@ -125,13 +136,15 @@ class OptimizeTab(BaseOperationTab):
         self.opt_keep_comments.toggled.connect(
             self._update_optimize_format_state
         )
+        self.opt_append_comment.textChanged.connect(
+            self._update_optimize_format_state
+        )
         self.optimize_run_button.clicked.connect(self._run_optimize)
 
         self._update_optimize_state()
         self._update_optimize_format_state()
 
     def _build_add_mode(self) -> None:
-        """Создает страницу режима добавления нового префикса."""
         self.add_page = QWidget()
         layout = QVBoxLayout(self.add_page)
 
@@ -153,6 +166,12 @@ class OptimizeTab(BaseOperationTab):
         self.add_keep_comments.setToolTip(
             "Preserve line comments (#). Disables aggregation and CSV output"
         )
+        self.add_append_comment = QLineEdit()
+        self.add_append_comment.setPlaceholderText("Optional comment for all output prefixes")
+        self.add_append_comment.setToolTip(
+            "Append this comment to output. Existing comments are replaced unless the next option is checked."
+        )
+        self.add_keep_existing_comments = QCheckBox("Keep existing comments and append to the end")
 
         self.add_format = QComboBox()
         self.add_format.addItems(["list", "csv"])
@@ -162,6 +181,8 @@ class OptimizeTab(BaseOperationTab):
 
         form = QFormLayout()
         form.addRow(self.add_keep_comments)
+        form.addRow("Append comment:", self.add_append_comment)
+        form.addRow(self.add_keep_existing_comments)
         form.addRow("Output format:", self.add_format)
 
         options.add_layout(form)
@@ -183,6 +204,9 @@ class OptimizeTab(BaseOperationTab):
         self.add_keep_comments.toggled.connect(
             self._update_add_format_state
         )
+        self.add_append_comment.textChanged.connect(
+            self._update_add_format_state
+        )
         self.add_run_button.clicked.connect(self._run_add)
 
         self._update_add_state()
@@ -192,13 +216,9 @@ class OptimizeTab(BaseOperationTab):
         self,
         keep_checkbox: QCheckBox,
         format_combo: QComboBox,
+        comments_active: bool = False,
     ) -> None:
-        """
-        Синхронизирует доступность форматов с режимом комментариев.
-
-        При активном keep-comments формат CSV блокируется.
-        """
-        keep_comments = keep_checkbox.isChecked()
+        keep_comments = keep_checkbox.isChecked() or comments_active
         csv_index = format_combo.findText("csv")
 
         if csv_index >= 0:
@@ -212,28 +232,45 @@ class OptimizeTab(BaseOperationTab):
             format_combo.setCurrentText("list")
 
     def _update_optimize_state(self, _: Any = None) -> None:
-        """Обновляет доступность кнопки запуска режима оптимизации."""
         self.optimize_run_button.setEnabled(
             self.optimize_input.get_data_source() is not None
         )
 
     def _update_optimize_format_state(self, _: Any = None) -> None:
-        """Обновляет доступность форматов для режима оптимизации."""
-        self._sync_format_state(self.opt_keep_comments, self.opt_format)
+        keep = self.opt_keep_comments.isChecked() or bool(self.opt_append_comment.text().strip())
+        self._sync_format_state(
+            self.opt_keep_comments,
+            self.opt_format,
+            bool(self.opt_append_comment.text().strip()),
+        )
+        self.append_comment = self.opt_append_comment
+        self.keep_existing_comments = self.opt_keep_existing_comments
+        self.update_comment_options_state(
+            self.opt_keep_comments.isChecked(), append_requires_keep=False
+        )
 
     def _update_add_state(self, _: Any = None) -> None:
-        """Обновляет доступность кнопки запуска режима добавления."""
         self.add_run_button.setEnabled(
             self.add_input.get_data_source() is not None
             and self.add_prefix_widget.get_value() is not None
         )
 
     def _update_add_format_state(self, _: Any = None) -> None:
-        """Обновляет доступность форматов для режима добавления."""
-        self._sync_format_state(self.add_keep_comments, self.add_format)
+        if self.add_append_comment.text().strip() and not self.add_keep_comments.isChecked():
+            self.add_keep_comments.setChecked(True)
+        self._sync_format_state(
+            self.add_keep_comments,
+            self.add_format,
+            bool(self.add_append_comment.text().strip()),
+        )
+        self.append_comment = self.add_append_comment
+        self.keep_existing_comments = self.add_keep_existing_comments
+        self.update_comment_options_state(
+            self.add_keep_comments.isChecked(), append_requires_keep=False
+        )
 
     def _run_optimize(self) -> None:
-        """Собирает параметры и запускает оптимизацию в фоновом потоке."""
+        """Collect options and launch the background worker."""
         source = self.optimize_input.get_data_source()
         if source is None:
             return
@@ -241,9 +278,11 @@ class OptimizeTab(BaseOperationTab):
         output_format = self.opt_format.currentText()
         keep_comments = self.opt_keep_comments.isChecked()
 
-        if keep_comments and output_format == "csv":
+        append_comment = self.opt_append_comment.text().strip() or None
+        keep_existing = self.opt_keep_existing_comments.isChecked()
+        if (keep_comments or append_comment) and output_format == "csv":
             self.output_panel.set_text(
-                "Error: Cannot use keep-comments with CSV format."
+                "Error: Cannot use comments with CSV format."
             )
             self.progress_panel.set_status("Error")
             return
@@ -255,6 +294,8 @@ class OptimizeTab(BaseOperationTab):
             self.opt_ipv4_only.isChecked(),
             self.opt_ipv6_only.isChecked(),
             keep_comments,
+            append_comment,
+            keep_existing,
             self.opt_strict.isChecked(),
         )
         worker.signals.result.connect(self._render_result)
@@ -262,7 +303,7 @@ class OptimizeTab(BaseOperationTab):
         self._start_worker(worker, "Running optimize...")
 
     def _run_add(self) -> None:
-        """Собирает параметры и запускает добавление в фоновом потоке."""
+        """Collect options and launch the background worker."""
         source = self.add_input.get_data_source()
         new_prefix = self.add_prefix_widget.get_value()
         if source is None or new_prefix is None:
@@ -271,9 +312,11 @@ class OptimizeTab(BaseOperationTab):
         output_format = self.add_format.currentText()
         keep_comments = self.add_keep_comments.isChecked()
 
-        if keep_comments and output_format == "csv":
+        append_comment = self.add_append_comment.text().strip() or None
+        keep_existing = self.add_keep_existing_comments.isChecked()
+        if (keep_comments or append_comment) and output_format == "csv":
             self.output_panel.set_text(
-                "Error: Cannot use keep-comments with CSV format."
+                "Error: Cannot use comments with CSV format."
             )
             self.progress_panel.set_status("Error")
             return
@@ -284,27 +327,26 @@ class OptimizeTab(BaseOperationTab):
             new_prefix,
             output_format,
             keep_comments,
+            append_comment,
+            keep_existing,
+            self.opt_strict.isChecked(),
         )
         worker.signals.result.connect(self._render_result)
         worker.signals.error.connect(self._on_error)
         self._start_worker(worker, "Adding prefix...")
 
     def _render_result(self, result: OptimizeResult) -> None:
-        """
-        Отображает результат операции.
-
-        Args:
-            result: Результат с готовой строкой formatted_text.
-        """
         self._expand_output()
         self.output_panel.set_text(result.formatted_text)
         self.progress_panel.set_status(
             f"Done. Input: {result.input_count}, "
             f"Output: {result.output_count}"
         )
+        # Free the large intermediate list once it has been rendered.
+        result.commented_prefixes.clear()
 
     def trigger_open(self) -> None:
-        """Открывает диалог выбора файла для активного режима."""
+        """Programmatically open a file for this tab (used by Ctrl+O)."""
         if self.mode_tabs.currentWidget() is self.optimize_page:
             if hasattr(self.optimize_input, "browse_button"):
                 self.optimize_input.browse_button.click()
@@ -313,7 +355,7 @@ class OptimizeTab(BaseOperationTab):
             self.add_input.browse_button.click()
 
     def trigger_run(self) -> None:
-        """Запускает операцию активного режима."""
+        """Programmatically run this tab's operation (used by Ctrl+R)."""
         if self.mode_tabs.currentWidget() is self.optimize_page:
             if self.optimize_run_button.isEnabled():
                 self.optimize_run_button.click()
@@ -322,30 +364,24 @@ class OptimizeTab(BaseOperationTab):
             self.add_run_button.click()
 
     def save_settings(self) -> dict:
-        """
-        Сохраняет состояние элементов управления.
-
-        Returns:
-            Словарь с параметрами обоих режимов.
-        """
+        """Serialise this tab's widget state for persistence."""
         return {
             "mode_index": self.mode_tabs.currentIndex(),
             "opt_ipv4_only": self.opt_ipv4_only.isChecked(),
             "opt_ipv6_only": self.opt_ipv6_only.isChecked(),
             "opt_keep_comments": self.opt_keep_comments.isChecked(),
+            "opt_append_comment": self.opt_append_comment.text(),
+            "opt_keep_existing_comments": self.opt_keep_existing_comments.isChecked(),
             "opt_strict": self.opt_strict.isChecked(),
             "opt_format": self.opt_format.currentText(),
             "add_keep_comments": self.add_keep_comments.isChecked(),
+            "add_append_comment": self.add_append_comment.text(),
+            "add_keep_existing_comments": self.add_keep_existing_comments.isChecked(),
             "add_format": self.add_format.currentText(),
         }
 
     def load_settings(self, state: dict) -> None:
-        """
-        Восстанавливает состояние элементов управления.
-
-        Args:
-            state: Словарь с сохраненными параметрами.
-        """
+        """Restore widget state previously saved by save_settings."""
         if not state:
             return
 
@@ -353,12 +389,19 @@ class OptimizeTab(BaseOperationTab):
         if 0 <= mode_index < self.mode_tabs.count():
             self.mode_tabs.setCurrentIndex(mode_index)
 
+        self.opt_append_comment.blockSignals(True)
+        self.add_append_comment.blockSignals(True)
         self.opt_ipv4_only.setChecked(state.get("opt_ipv4_only", False))
         self.opt_ipv6_only.setChecked(state.get("opt_ipv6_only", False))
         self.opt_keep_comments.setChecked(
             state.get("opt_keep_comments", False)
         )
+        self.opt_append_comment.setText(state.get("opt_append_comment", ""))
+        self.opt_keep_existing_comments.setChecked(
+            state.get("opt_keep_existing_comments", False)
+        )
         self.opt_strict.setChecked(state.get("opt_strict", False))
+        self.opt_append_comment.blockSignals(False)
 
         optimize_format = state.get("opt_format", "list")
         optimize_index = self.opt_format.findText(optimize_format)
@@ -368,8 +411,16 @@ class OptimizeTab(BaseOperationTab):
         self.add_keep_comments.setChecked(
             state.get("add_keep_comments", False)
         )
+        self.add_append_comment.setText(state.get("add_append_comment", ""))
+        self.add_keep_existing_comments.setChecked(
+            state.get("add_keep_existing_comments", False)
+        )
+        self.add_append_comment.blockSignals(False)
 
         add_format = state.get("add_format", "list")
         add_index = self.add_format.findText(add_format)
         if add_index >= 0:
             self.add_format.setCurrentIndex(add_index)
+
+        self._update_optimize_format_state()
+        self._update_add_format_state()

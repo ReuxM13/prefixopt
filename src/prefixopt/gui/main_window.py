@@ -1,9 +1,12 @@
 """
-Главное окно GUI-приложения prefixopt.
+Top-level main window: tab bar, menus, global shortcuts and settings wiring.
 
-Инициализирует вкладки, горячие клавиши, статусбар и восстанавливает
-сохраненное состояние окна и пользовательских настроек.
+Hosts one tab per operation (Optimize, Filter, Merge, Exclude, ...), manages
+the recent-files menu, persists/restores window geometry and tab state through
+:class:`SettingsManager`, and routes ``Ctrl+R``/``Ctrl+O``/``Ctrl+S`` to the
+active tab.
 """
+
 
 from __future__ import annotations
 
@@ -12,7 +15,12 @@ from typing import Optional
 
 from PySide6.QtCore import QEvent, QTimer, QUrl, Qt
 from PySide6.QtGui import QCloseEvent, QKeyEvent, QKeySequence, QShortcut, QShowEvent
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+try:
+    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+    _MULTIMEDIA_AVAILABLE = True
+except ImportError:  # pragma: no cover - backend missing on minimal systems
+    QAudioOutput = QMediaPlayer = None  # type: ignore
+    _MULTIMEDIA_AVAILABLE = False
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -39,10 +47,11 @@ _EASTER_EGG_DURATION_MS = 30000
 
 
 class MainWindow(QMainWindow):
-    """Главное окно приложения."""
+
+    """Top-level window hosting the operation tabs, menus and shortcuts."""
 
     def __init__(self) -> None:
-        """Инициализирует окно приложения."""
+        """Set up the widget, build its UI and wire up signals."""
         super().__init__()
         self.setWindowTitle("prefixopt")
         self.setMinimumSize(640, 480)
@@ -66,7 +75,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(100, self._do_install_key_spy)
 
     def _setup_default_geometry(self) -> None:
-        """Устанавливает размеры окна по умолчанию."""
         screen = QApplication.primaryScreen()
         if screen is None:
             self.resize(1350, 900)
@@ -78,7 +86,7 @@ class MainWindow(QMainWindow):
         self.resize(width, height)
 
     def _init_ui(self) -> None:
-        """Создает вкладки и регистрирует их в менеджере настроек."""
+        """Construct and lay out all child widgets for this tab."""
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
 
@@ -102,29 +110,22 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
     def _setup_statusbar(self) -> None:
-        """Настраивает статусбар с подсказками."""
         self._statusbar = QStatusBar()
         self.setStatusBar(self._statusbar)
-        self._statusbar.showMessage("Ready — Ctrl+R to run, Ctrl+O to open file")
+        self._statusbar.showMessage("Ready - Ctrl+R to run, Ctrl+O to open file")
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
     def _on_tab_changed(self, index: int) -> None:
-        """
-        Обновляет статусбар и переустанавливает перехватчик при смене вкладки.
-
-        Args:
-            index: Индекс выбранной вкладки.
-        """
+        """Handle the tab changed event."""
         tab_name = self.tabs.tabText(index)
         self._statusbar.showMessage(
-            f"{tab_name} — Ctrl+R to run, Ctrl+O to open, "
+            f"{tab_name} - Ctrl+R to run, Ctrl+O to open, "
             f"Ctrl+S to save, Ctrl+Q to quit"
         )
         QTimer.singleShot(50, self._do_install_key_spy)
 
     def _setup_shortcuts(self) -> None:
-        """Настраивает глобальные горячие клавиши окна."""
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(
             lambda: self._dispatch_tab_action("browse")
         )
@@ -147,19 +148,16 @@ class MainWindow(QMainWindow):
         )
 
     def _next_tab(self) -> None:
-        """Переключает на следующую вкладку циклически."""
         current = self.tabs.currentIndex()
         total = self.tabs.count()
         self.tabs.setCurrentIndex((current + 1) % total)
 
     def _prev_tab(self) -> None:
-        """Переключает на предыдущую вкладку циклически."""
         current = self.tabs.currentIndex()
         total = self.tabs.count()
         self.tabs.setCurrentIndex((current - 1) % total)
 
     def _restore_saved_state(self) -> None:
-        """Восстанавливает состояние окна и настроек вкладок."""
         geometry = self._settings.load_main_window_geometry()
         if geometry is not None:
             self.restoreGeometry(geometry)
@@ -174,7 +172,6 @@ class MainWindow(QMainWindow):
             self.setWindowState(self.windowState() | Qt.WindowMaximized)
 
     def _save_state(self) -> None:
-        """Сохраняет состояние окна, вкладок и сплиттеров."""
         self._settings.save_main_window(
             geometry=self.saveGeometry(),
             maximized=self.isMaximized(),
@@ -184,7 +181,6 @@ class MainWindow(QMainWindow):
         self._settings.save_all()
 
     def _save_splitters(self) -> None:
-        """Сохраняет размеры сплиттеров всех вкладок."""
         for key, tab in self._tab_widgets.items():
             main_splitter = tab.get_splitter_widget()
             if main_splitter is not None:
@@ -203,7 +199,6 @@ class MainWindow(QMainWindow):
                     )
 
     def _restore_splitters(self) -> None:
-        """Восстанавливает размеры сплиттеров всех вкладок."""
         for key, tab in self._tab_widgets.items():
             main_splitter = tab.get_splitter_widget()
             if main_splitter is not None:
@@ -222,24 +217,12 @@ class MainWindow(QMainWindow):
                         nested_splitter.setSizes(sizes)
 
     def _current_tab(self) -> Optional[BaseOperationTab]:
-        """
-        Возвращает активную вкладку.
-
-        Returns:
-            Текущий виджет вкладки или None.
-        """
         widget = self.tabs.currentWidget()
         if isinstance(widget, BaseOperationTab):
             return widget
         return None
 
     def _dispatch_tab_action(self, action_type: str) -> None:
-        """
-        Выполняет действие для активной вкладки.
-
-        Args:
-            action_type: Тип действия.
-        """
         tab = self._current_tab()
         if tab is None:
             return
@@ -260,10 +243,6 @@ class MainWindow(QMainWindow):
             tab.trigger_copy()
 
     def _do_install_key_spy(self) -> None:
-        """
-        Рекурсивно устанавливает eventFilter на все дочерние виджеты,
-        принимающие клавиатурный ввод.
-        """
         from PySide6.QtWidgets import (
             QAbstractButton,
             QAbstractScrollArea,
@@ -291,16 +270,7 @@ class MainWindow(QMainWindow):
                 widget.installEventFilter(self)
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:
-        """
-        Перехватывает события клавиатуры для пасхалки.
-
-        Args:
-            obj: Объект-источник события.
-            event: Событие.
-
-        Returns:
-            False для продолжения обработки.
-        """
+        """Perform eventFilter."""
         if event.type() == QEvent.Type.KeyPress:
             key_event: QKeyEvent = event
 
@@ -323,7 +293,6 @@ class MainWindow(QMainWindow):
         return False
 
     def _trigger_easter_egg(self) -> None:
-        """Активирует пасхалку."""
         if self._easter_active:
             return
 
@@ -344,13 +313,14 @@ class MainWindow(QMainWindow):
         )
 
     def _deactivate_easter_egg(self) -> None:
-        """Восстанавливает нормальное состояние интерфейса."""
         app = QApplication.instance()
         app.setStyleSheet(self._saved_stylesheet)
         self._easter_active = False
 
     def _play_sound(self) -> None:
-        """Воспроизводит звуковой файл пасхалки."""
+        """Play the easter-egg sound if QtMultimedia is available."""
+        if not _MULTIMEDIA_AVAILABLE:
+            return
         sound_path = Path(__file__).parent / "m.mp3"
         if not sound_path.exists():
             return
@@ -364,12 +334,7 @@ class MainWindow(QMainWindow):
         self._media_player.play()
 
     def showEvent(self, event: QShowEvent) -> None:
-        """
-        Восстанавливает сплиттеры после первого показа окна.
-
-        Args:
-            event: Событие показа.
-        """
+        """Perform showEvent."""
         super().showEvent(event)
 
         if self._splitters_restored:
@@ -379,12 +344,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._restore_splitters)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """
-        Сохраняет состояние и завершает задачи перед закрытием.
-
-        Args:
-            event: Событие закрытия.
-        """
+        """Perform closeEvent."""
         for widget in self._tab_widgets.values():
             widget._graceful_shutdown()
 

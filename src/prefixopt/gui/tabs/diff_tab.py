@@ -1,6 +1,8 @@
 """
-Вкладка семантического сравнения двух источников префиксов.
+Diff tab: semantic comparison of two prefix lists showing added, removed and
+unchanged networks in an HTML report.
 """
+
 
 from typing import Any
 from pathlib import Path
@@ -24,15 +26,16 @@ from ..workers import Worker
 
 
 class DiffTab(BaseOperationTab):
-    """Вкладка сравнения двух источников и отображения различий."""
+
+    """Semantically compare two prefix lists (added/removed/unchanged)."""
 
     def __init__(self) -> None:
-        """Инициализирует вкладку и создает элементы интерфейса."""
+        """Set up the widget, build its UI and wire up signals."""
         super().__init__()
         self._init_ui()
 
     def _init_ui(self) -> None:
-        """Создает элементы управления вкладки и подключает сигналы."""
+        """Construct and lay out all child widgets for this tab."""
         desc = QLabel(
             "Compare two sources and show added, removed "
             "and unchanged prefixes."
@@ -111,23 +114,11 @@ class DiffTab(BaseOperationTab):
         self._update_state()
 
     def _is_dark_theme(self) -> bool:
-        """
-        Определяет активную тему по яркости фона палитры.
-
-        Returns:
-            True для тёмной темы.
-        """
         bg = self.palette().color(QPalette.ColorRole.Window)
         luminance = 0.299 * bg.redF() + 0.587 * bg.greenF() + 0.114 * bg.blueF()
         return luminance < 0.5
 
     def _get_diff_colors(self) -> dict:
-        """
-        Возвращает набор цветов для diff-отчета, адаптированный к текущей теме.
-
-        Returns:
-            Словарь с ключами added, removed, unchanged.
-        """
         if self._is_dark_theme():
             return {
                 "added": "#4ec9b0",
@@ -141,14 +132,14 @@ class DiffTab(BaseOperationTab):
         }
 
     def _update_state(self, _: Any = None) -> None:
-        """Обновляет доступность кнопки запуска."""
+        """Enable/disable the Run button based on current input validity."""
         self.run_button.setEnabled(
             self.new_input.get_data_source() is not None
             and self.old_input.get_data_source() is not None
         )
 
     def _run_diff(self) -> None:
-        """Запускает задачу сравнения в фоновом потоке."""
+        """Collect options and launch the background worker."""
         new_source = self.new_input.get_data_source()
         old_source = self.old_input.get_data_source()
 
@@ -168,12 +159,7 @@ class DiffTab(BaseOperationTab):
         self._start_worker(worker, "Calculating diff...")
 
     def _on_diff_result(self, result: DiffReport) -> None:
-        """
-        Формирует и отображает отчет diff.
-
-        Args:
-            result: Результат сравнения источников.
-        """
+        """Handle the diff result event."""
         self._expand_output()
 
         mode = self.mode.currentText()
@@ -264,7 +250,6 @@ class DiffTab(BaseOperationTab):
         )
 
     def _swap_sources(self) -> None:
-        """Меняет местами содержимое new_input и old_input."""
         state_new = self.new_input.save_state()
         state_old = self.old_input.save_state()
         self.new_input.restore_state(state_old)
@@ -272,24 +257,19 @@ class DiffTab(BaseOperationTab):
         self._update_state()
 
     def trigger_open(self) -> None:
-        """Открывает диалог выбора файла для первого незаполненного источника."""
+        """Programmatically open a file for this tab (used by Ctrl+O)."""
         if self.new_input.get_data_source() is None:
             self.new_input.browse_button.click()
             return
         self.old_input.browse_button.click()
 
     def trigger_run(self) -> None:
-        """Запускает сравнение."""
+        """Programmatically run this tab's operation (used by Ctrl+R)."""
         if self.run_button.isEnabled():
             self.run_button.click()
 
     def save_settings(self) -> dict:
-        """
-        Сохраняет параметры вкладки.
-
-        Returns:
-            Словарь с текущими настройками.
-        """
+        """Serialise this tab's widget state for persistence."""
         return {
             "mode": self.mode.currentText(),
             "summary_only": self.summary_only.isChecked(),
@@ -299,12 +279,7 @@ class DiffTab(BaseOperationTab):
         }
 
     def load_settings(self, state: dict) -> None:
-        """
-        Восстанавливает параметры вкладки.
-
-        Args:
-            state: Словарь с сохраненными настройками.
-        """
+        """Restore widget state previously saved by save_settings."""
         if not state:
             return
 

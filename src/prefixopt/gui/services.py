@@ -1,11 +1,19 @@
 """
-Сервисный слой для интеграции ядра (core) с графическим интерфейсом.
+Service layer for the GUI.
 
-Каждая функция выполняет полный цикл обработки: загрузка данных,
-математические операции и форматирование результата в строку.
-Все функции вызываются исключительно из фоновых потоков (Worker).
+Each ``run_*`` function performs one complete operation: it loads inputs from
+either a file path or raw text, calls the core algorithms, and returns a result
+dataclass (see ``models.py``) containing a ready-to-display ``formatted_text``.
+Functions are executed off the GUI thread by ``Worker`` so the UI stays
+responsive. This module is the GUI equivalent of the CLI command modules but
+returns structured objects instead of printing to stdout.
+
+Key entry points: run_optimize, run_add, run_filter, run_merge, run_exclude,
+run_split, run_diff, run_intersect, run_multi_intersect, run_stats, run_check.
 """
 
+
+import io
 import ipaddress
 from pathlib import Path
 from typing import (
@@ -18,7 +26,9 @@ from typing import (
     Union,
 )
 
+from ..comments import apply_append_comment, merge_comments, normalize_comment
 from ..core.ip_counter import count_unique_ips, get_duplicate_prefixes, get_prefix_statistics
+from ..core.operations.filter import filter_special
 from ..core.ip_utils import IPNet, is_subnet_of, normalize_prefix
 from ..core.operations.diff import calculate_diff
 from ..core.operations.sorter import sort_networks
@@ -30,6 +40,7 @@ from ..data.file_reader import (
     extract_prefixes_from_text,
     read_networks,
     read_prefixes_with_comments,
+    read_stream,
 )
 from .models import (
     CheckResult,
@@ -54,38 +65,21 @@ def _load_networks(
     source: InputSource,
     strict: bool = False,
 ) -> Iterator[IPNet]:
-    """
-    Загружает сети из файла или текстовой строки.
-
-    Args:
-        source: Путь к файлу или текст с префиксами.
-        strict: Строгая валидация (host bits).
-
-    Yields:
-        Объекты IPv4Network / IPv6Network.
-    """
+    """Load networks from a file path or raw text, yielding IPNet objects."""
     if isinstance(source, Path):
         yield from read_networks(source, show_progress=False, strict=strict)
     else:
-        results = extract_prefixes_from_text(source, strict=strict)
-        if results:
-            yield from results
+        # Parse the text line by line (mirroring the CLI's STDIN reader) so
+        # that duplicates on separate lines are preserved and per-line ranges
+        # behave identically to file input.
+        yield from read_stream(io.StringIO(source), strict=strict)
 
 
 def _load_with_comments(
     source: InputSource,
     strict: bool = False,
 ) -> Iterator[Tuple[IPNet, str]]:
-    """
-    Загружает сети с комментариями из файла или текстовой строки.
-
-    Args:
-        source: Путь к файлу или текст.
-        strict: Строгая валидация.
-
-    Yields:
-        Кортеж (IPNet, comment).
-    """
+    """Load (network, comment) pairs from a file path or raw text. For string input, text after the first '#' on each line becomes the comment."""
     if isinstance(source, Path):
         yield from read_prefixes_with_comments(source, strict=strict)
     else:
@@ -114,14 +108,7 @@ def _deduplicate_commented(
     ipv4_only: bool = False,
     ipv6_only: bool = False,
 ) -> List[Tuple[IPNet, str]]:
-    """
-    Дедупликация префиксов с сохранением комментариев.
-
-    При дублировании приоритет отдается непустому комментарию.
-
-    Returns:
-        Отсортированный список кортежей (IPNet, comment).
-    """
+    """Deduplicate networks preserving a non-empty comment, then sort broadest-first."""
     unique_map: dict[str, str] = {}
 
     for net, comment in source:
@@ -158,24 +145,40 @@ def run_optimize(
     ipv4_only: bool = False,
     ipv6_only: bool = False,
     keep_comments: bool = False,
+    append_comment: Optional[str] = None,
+    keep_existing_comments: bool = False,
     strict: bool = False,
 ) -> OptimizeResult:
-    """
-    Выполняет полный цикл оптимизации префиксов.
+    """Optimize a source (sort, remove nested, aggregate). In comment/append mode aggregation is disabled so comments remain meaningful."""
+    if append_comment and not keep_existing_comments:
+        raw_list = list(_load_networks(source, strict=strict))
+        input_count = len(raw_list)
+        result_list = list(
+            process_prefixes(
+                raw_list,
+                sort=True,
+                remove_nested=True,
+                aggregate=True,
+                ipv4_only=ipv4_only,
+                ipv6_only=ipv6_only,
+            )
+        )
+        commented = [(net, normalize_comment(append_comment)) for net in result_list]
+        return OptimizeResult(
+            keep_comments=True,
+            input_count=input_count,
+            output_count=len(result_list),
+            commented_prefixes=commented,
+            formatted_text=format_prefixes([], fmt, commented=commented),
+        )
 
-    Args:
-        source: Источник данных (путь к файлу или текст).
-        fmt: Формат вывода ("list" или "csv").
-        ipv4_only: Оставить только IPv4.
-        ipv6_only: Оставить только IPv6.
-        keep_comments: Режим дедупликации с сохранением комментариев.
-        strict: Строгая валидация host bits.
-
-    Returns:
-        OptimizeResult с готовой строкой formatted_text и статистикой.
-    """
-    if keep_comments:
+    if keep_comments or keep_existing_comments or append_comment:
         raw = _load_with_comments(source, strict=strict)
+        if append_comment:
+            raw = (
+                (net, apply_append_comment(comment, append_comment, True))
+                for net, comment in raw
+            )
         commented = _deduplicate_commented(
             raw, ipv4_only=ipv4_only, ipv6_only=ipv6_only
         )
@@ -185,6 +188,7 @@ def run_optimize(
             keep_comments=True,
             input_count=len(commented),
             output_count=len(commented),
+            commented_prefixes=commented,
             formatted_text=formatted_text,
         )
 
@@ -215,48 +219,60 @@ def run_add(
     new_prefix: str,
     fmt: str,
     keep_comments: bool = False,
+    append_comment: Optional[str] = None,
+    keep_existing_comments: bool = False,
+    strict: bool = False,
 ) -> OptimizeResult:
-    """
-    Добавляет новый префикс в список и выполняет реоптимизацию.
+    """Add one prefix to a source and re-optimize or merge it into the commented list."""
+    net_to_add = normalize_prefix(new_prefix, strict=strict)
 
-    Args:
-        source: Источник данных (путь к файлу или текст).
-        new_prefix: Строковое представление добавляемого префикса.
-        fmt: Формат вывода ("list" или "csv").
-        keep_comments: Режим с сохранением комментариев.
+    if append_comment and not keep_existing_comments:
+        data = list(_load_networks(source, strict=strict))
+        input_count = len(data)
+        if net_to_add not in data:
+            data.append(net_to_add)
+        result = list(
+            process_prefixes(data, sort=True, remove_nested=True, aggregate=True)
+        )
+        commented = [(net, normalize_comment(append_comment)) for net in result]
+        formatted_text = format_prefixes([], fmt, commented=commented)
+        return OptimizeResult(
+            keep_comments=True,
+            input_count=input_count + 1,
+            output_count=len(result),
+            commented_prefixes=commented,
+            formatted_text=formatted_text,
+        )
 
-    Returns:
-        OptimizeResult с готовой строкой formatted_text и статистикой.
-    """
-    net_to_add = normalize_prefix(new_prefix)
-
-    if keep_comments:
-        raw = _load_with_comments(source)
-        commented = _deduplicate_commented(raw)
-
-        exists = any(item[0] == net_to_add for item in commented)
-        if not exists:
-            commented.append(
-                (net_to_add, f"# Added manually: {new_prefix}")
-            )
-            commented.sort(
-                key=lambda x: (
-                    x[0].version,
-                    int(x[0].network_address),
-                    x[0].prefixlen,
+    if keep_comments or append_comment:
+        raw = _load_with_comments(source, strict=strict)
+        commented_map = {str(net): comment for net, comment in _deduplicate_commented(raw)}
+        if append_comment:
+            for key, comment in list(commented_map.items()):
+                commented_map[key] = apply_append_comment(
+                    comment, append_comment, keep_existing_comments
                 )
+        new_key = str(net_to_add)
+        if new_key not in commented_map:
+            commented_map[new_key] = normalize_comment(append_comment) if append_comment else f"# Added manually: {new_prefix}"
+        elif append_comment:
+            commented_map[new_key] = apply_append_comment(
+                commented_map[new_key], append_comment, keep_existing_comments
             )
-
+        commented = _deduplicate_commented(
+            (ipaddress.ip_network(k, strict=False), v) for k, v in commented_map.items()
+        )
         formatted_text = format_prefixes([], fmt, commented=commented)
 
         return OptimizeResult(
             keep_comments=True,
             input_count=len(commented),
             output_count=len(commented),
+            commented_prefixes=commented,
             formatted_text=formatted_text,
         )
 
-    data = list(_load_networks(source))
+    data = list(_load_networks(source, strict=strict))
     input_count = len(data)
 
     if net_to_add not in data:
@@ -286,41 +302,51 @@ def run_filter(
     exclude_multicast: bool = False,
     exclude_reserved: bool = False,
     bogons: bool = False,
+    keep_comments: bool = False,
+    append_comment: Optional[str] = None,
+    keep_existing_comments: bool = False,
     strict: bool = False,
 ) -> FilterResult:
-    """
-    Фильтрует список, удаляя указанные категории сетей.
+    """Filter special-use networks out of a source. In comment mode each surviving prefix keeps/gets a comment."""
+    flags = dict(
+        exclude_private=exclude_private or bogons,
+        exclude_loopback=exclude_loopback or bogons,
+        exclude_link_local=exclude_link_local or bogons,
+        exclude_multicast=exclude_multicast or bogons,
+        exclude_reserved=exclude_reserved or bogons,
+        exclude_unspecified=True,
+    )
 
-    Args:
-        source: Источник данных.
-        fmt: Формат вывода ("list" или "csv").
-        exclude_private: Удалить RFC 1918.
-        exclude_loopback: Удалить loopback.
-        exclude_link_local: Удалить link-local.
-        exclude_multicast: Удалить multicast.
-        exclude_reserved: Удалить reserved.
-        bogons: Удалить bogons.
-        strict: Строгая валидация.
+    if keep_comments or append_comment:
+        raw = list(_load_with_comments(source, strict=strict))
+        original_count = len(raw)
+        result = []
+        for net, comment in raw:
+            kept = list(filter_special([net], **flags))
+            if not kept:
+                continue
+            if append_comment:
+                comment = apply_append_comment(
+                    comment if keep_existing_comments else "",
+                    append_comment,
+                    keep_existing_comments,
+                )
+            elif keep_comments:
+                pass
+            else:
+                comment = ""
+            result.append((kept[0], comment))
+        formatted_text = format_prefixes([], fmt, commented=result)
+        return FilterResult(
+            original_count=original_count,
+            removed_count=original_count - len(result),
+            formatted_text=formatted_text,
+        )
 
-    Returns:
-        FilterResult с готовой строкой formatted_text и статистикой.
-    """
     raw = list(_load_networks(source, strict=strict))
     original_count = len(raw)
 
-    result_iter = process_prefixes(
-        raw,
-        sort=False,
-        remove_nested=False,
-        aggregate=False,
-        exclude_private=exclude_private,
-        exclude_loopback=exclude_loopback,
-        exclude_link_local=exclude_link_local,
-        exclude_multicast=exclude_multicast,
-        exclude_reserved=exclude_reserved,
-        exclude_unspecified=True,
-        bogons=bogons,
-    )
+    result_iter = filter_special(raw, **flags)
     result = list(result_iter)
     formatted_text = format_prefixes(result, fmt)
 
@@ -337,70 +363,42 @@ def run_merge(
     fmt: str,
     keep_comments: bool = False,
     append_comment: Optional[str] = None,
+    keep_existing_comments: bool = False,
     strict: bool = False,
 ) -> MergeResult:
-    """
-    Объединяет два источника данных.
-
-    Args:
-        source1: Первый источник.
-        source2: Второй источник.
-        fmt: Формат вывода ("list" или "csv").
-        keep_comments: Режим дедупликации с комментариями.
-        append_comment: Текст для добавления к комментариям source1.
-        strict: Строгая валидация.
-
-    Returns:
-        MergeResult с готовой строкой formatted_text.
-    """
+    """Merge two sources. In comment mode Source 2 comments are preserved; Source 1 may get an append-comment."""
     if keep_comments:
         unique_map: dict[str, str] = {}
+        annotation = normalize_comment(append_comment)
 
-        if append_comment:
-            annotation = (
-                f"# {append_comment.strip()}" if append_comment.strip() else ""
-            )
+        # Source 2 = existing (old/base) list.
+        for ip, comment in _load_with_comments(source2, strict=strict):
+            ip_str = str(ip)
+            if ip_str not in unique_map:
+                unique_map[ip_str] = comment
 
-            for ip, comment in _load_with_comments(source2, strict=strict):
-                ip_str = str(ip)
-                if ip_str not in unique_map:
-                    unique_map[ip_str] = comment
+        # Source 1 = incoming (new) list. Marker is applied to every Source 1
+        # prefix, including duplicates already present in Source 2.
+        for ip, comment in _load_with_comments(source1, strict=strict):
+            ip_str = str(ip)
 
-            for ip, comment in _load_with_comments(source1, strict=strict):
-                ip_str = str(ip)
-                parts_existing: set[str] = set()
-                parts_new: list[str] = []
+            if annotation:
+                source1_comment = (
+                    comment if keep_existing_comments else ""
+                )
+                combined = merge_comments(source1_comment, annotation)
+            else:
+                combined = comment
 
-                if ip_str in unique_map:
-                    for p in _split_comment(unique_map[ip_str]):
-                        parts_existing.add(p)
-                        parts_new.append(p)
-
-                for p in _split_comment(comment):
-                    if p not in parts_existing:
-                        parts_existing.add(p)
-                        parts_new.append(p)
-
-                for p in _split_comment(annotation):
-                    if p not in parts_existing:
-                        parts_existing.add(p)
-                        parts_new.append(p)
-
-                unique_map[ip_str] = _join_comment(parts_new)
-        else:
-            for ip, comment in _load_with_comments(source1, strict=strict):
-                ip_str = str(ip)
-                if ip_str not in unique_map:
-                    unique_map[ip_str] = comment
-                elif not unique_map[ip_str] and comment:
-                    unique_map[ip_str] = comment
-
-            for ip, comment in _load_with_comments(source2, strict=strict):
-                ip_str = str(ip)
-                if ip_str not in unique_map:
-                    unique_map[ip_str] = comment
-                elif not unique_map[ip_str] and comment:
-                    unique_map[ip_str] = comment
+            if ip_str in unique_map:
+                if annotation and not keep_existing_comments:
+                    unique_map[ip_str] = combined
+                else:
+                    unique_map[ip_str] = merge_comments(
+                        unique_map[ip_str], combined
+                    )
+            else:
+                unique_map[ip_str] = combined
 
         commented: List[Tuple[IPNet, str]] = []
         for ip_str, comm in unique_map.items():
@@ -420,6 +418,7 @@ def run_merge(
         return MergeResult(
             keep_comments=True,
             total_count=len(commented),
+            commented_prefixes=commented,
             formatted_text=formatted_text,
         )
 
@@ -443,25 +442,6 @@ def run_merge(
     )
 
 
-def _split_comment(comment: str) -> List[str]:
-    """Разбивает комментарий на части по разделителю '|'."""
-    if not comment:
-        return []
-    raw = comment.strip()
-    if raw.startswith("#"):
-        raw = raw[1:].strip()
-    if not raw:
-        return []
-    return [p.strip() for p in raw.split("|") if p.strip()]
-
-
-def _join_comment(parts: List[str]) -> str:
-    """Собирает части комментария в строку с разделителем '|'."""
-    if not parts:
-        return ""
-    return f"# {' | '.join(parts)}"
-
-
 def run_intersect(
     source1: InputSource,
     source2: Optional[InputSource] = None,
@@ -469,19 +449,7 @@ def run_intersect(
     name1: str = "Source A",
     name2: str = "Source B",
 ) -> IntersectReport:
-    """
-    Находит пересечения между двумя списками или внутри одного.
-
-    Args:
-        source1: Первый источник.
-        source2: Второй источник (None для self-intersect).
-        strict: Строгая валидация.
-        name1: Имя первого источника для отчета.
-        name2: Имя второго источника для отчета.
-
-    Returns:
-        IntersectReport с результатами анализа пересечений.
-    """
+    """Compute intersections between one/two sources (exact matches and partial overlaps)."""
     list1 = list(_load_networks(source1, strict=strict))
     self_mode = source2 is None
 
@@ -554,21 +522,10 @@ def run_diff(
     ipv6_only: bool = False,
     strict: bool = False,
 ) -> DiffReport:
-    """
-    Семантическое сравнение двух наборов данных.
 
-    Args:
-        new_source: Новый набор данных.
-        old_source: Старый набор данных.
-        ipv4_only: Оставить только IPv4.
-        ipv6_only: Оставить только IPv6.
-        strict: Строгая валидация.
-
-    Returns:
-        DiffReport со списками добавленных, удаленных и неизменных префиксов.
-    """
-
+    """Semantic diff: both sources are optimized before comparing."""
     def prepare(src: InputSource) -> List[IPNet]:
+        """Read and optimise one side of the diff."""
         raw = _load_networks(src, strict=strict)
         return list(
             process_prefixes(
@@ -598,28 +555,37 @@ def run_exclude(
     target: InputSource,
     fmt: str,
     keep_comments: bool = False,
+    append_comment: Optional[str] = None,
+    keep_existing_comments: bool = False,
     ipv4_only: bool = False,
     ipv6_only: bool = False,
     strict: bool = False,
 ) -> ExcludeResult:
-    """
-    Вычитает target из source (hole punching).
-
-    Args:
-        source: Исходный список.
-        target: Список для исключения.
-        fmt: Формат вывода ("list" или "csv").
-        keep_comments: Наследовать комментарии от родительских сетей.
-        ipv4_only: Оставить только IPv4.
-        ipv6_only: Оставить только IPv6.
-        strict: Строгая валидация.
-
-    Returns:
-        ExcludeResult с готовой строкой formatted_text.
-    """
+    """Subtract target from source (hole punching), optionally inheriting/annotating comments."""
     exclude_list = list(_load_networks(target, strict=strict))
 
-    if keep_comments:
+    if append_comment and not keep_existing_comments:
+        source_list = list(_load_networks(source, strict=strict))
+        raw_result = subtract_networks(source_list, exclude_list)
+        result = list(
+            process_prefixes(
+                raw_result,
+                sort=True,
+                remove_nested=True,
+                aggregate=True,
+                ipv4_only=ipv4_only,
+                ipv6_only=ipv6_only,
+            )
+        )
+        commented = [(net, normalize_comment(append_comment)) for net in result]
+        return ExcludeResult(
+            keep_comments=True,
+            total_count=len(commented),
+            commented_prefixes=commented,
+            formatted_text=format_prefixes([], fmt, commented=commented),
+        )
+
+    if keep_comments or append_comment:
         source_prefixes: List[IPNet] = []
         comments_map: dict[IPNet, str] = {}
 
@@ -647,6 +613,10 @@ def run_exclude(
                         if original in comments_map:
                             inherited = comments_map[original]
                             break
+            if append_comment:
+                inherited = apply_append_comment(
+                    inherited, append_comment, keep_existing_comments
+                )
             commented.append((fragment, inherited))
 
         formatted_text = format_prefixes([], fmt, commented=commented)
@@ -654,6 +624,7 @@ def run_exclude(
         return ExcludeResult(
             keep_comments=True,
             total_count=len(commented),
+            commented_prefixes=commented,
             formatted_text=formatted_text,
         )
 
@@ -683,20 +654,29 @@ def run_split(
     source: InputSource,
     target_length: int,
     fmt: str = "list",
+    keep_comments: bool = False,
+    append_comment: Optional[str] = None,
+    keep_existing_comments: bool = False,
     strict: bool = False,
 ) -> SplitResult:
-    """
-    Разбивает сети на подсети указанной длины.
+    """Split each source network into subnets of the target prefix length."""
+    if keep_comments or append_comment:
+        commented: List[Tuple[IPNet, str]] = []
+        for net, comment in _load_with_comments(source, strict=strict):
+            for sub in split_network(net, target_length):
+                inherited = comment if keep_comments or keep_existing_comments else ""
+                if append_comment:
+                    inherited = apply_append_comment(
+                        inherited,
+                        append_comment,
+                        keep_existing=keep_existing_comments,
+                    )
+                commented.append((sub, inherited))
+        return SplitResult(
+            total_count=len(commented),
+            formatted_text=format_prefixes([], fmt, commented=commented),
+        )
 
-    Args:
-        source: Источник данных.
-        target_length: Целевая длина префикса.
-        fmt: Формат вывода ("list" или "csv").
-        strict: Строгая валидация.
-
-    Returns:
-        SplitResult с готовой строкой formatted_text.
-    """
     all_subnets: List[IPNet] = []
 
     for net in _load_networks(source, strict=strict):
@@ -712,16 +692,7 @@ def run_split(
 
 
 def run_stats(source: InputSource, strict: bool = False) -> StatsResult:
-    """
-    Собирает статистику по списку префиксов.
-
-    Args:
-        source: Источник данных.
-        strict: Строгая валидация.
-
-    Returns:
-        StatsResult с метриками.
-    """
+    """Return summary statistics for a source list."""
     data = list(_load_networks(source, strict=strict))
     raw_stats = get_prefix_statistics(data)
 
@@ -748,17 +719,7 @@ def run_check(
     source: InputSource,
     strict: bool = False,
 ) -> CheckResult:
-    """
-    Проверяет, входит ли target в список source.
-
-    Args:
-        target: IP-адрес или префикс для проверки.
-        source: Источник данных для поиска.
-        strict: Строгая валидация.
-
-    Returns:
-        CheckResult с результатом проверки и готовой строкой.
-    """
+    """Return all networks in source that contain the target IP/prefix."""
     try:
         if "/" in target:
             check_item = ipaddress.ip_network(target, strict=False)
@@ -797,20 +758,7 @@ def run_multi_intersect(
     strict: bool = False,
     source_names: Optional[List[str]] = None,
 ) -> MultiIntersectReport:
-    """
-    Находит карту присутствия префиксов и выполняет полный pairwise-анализ.
-
-    Загружает и оптимизирует все источники, строит матрицу присутствия,
-    вычисляет попарные точные совпадения и частичные перекрытия.
-
-    Args:
-        *sources: Два и более источника данных.
-        strict: Строгая валидация.
-        source_names: Имена источников для отчета.
-
-    Returns:
-        MultiIntersectReport с полными данными для рендеринга.
-    """
+    """Analyse 2+ sources, building a presence matrix and pairwise exact/partial overlaps."""
     if len(sources) < 2:
         raise ValueError("Multi-intersect requires at least 2 sources")
 
@@ -838,7 +786,7 @@ def run_multi_intersect(
             freq[key] = freq.get(key, 0) + 1
 
     sets = [set(lst) for lst in lists]
-    # Предвычисляем строковые представления множеств для O(N) поиска
+
     str_sets = [{str(n) for n in s} for s in sets]
 
     presence_map: Dict[str, List[int]] = {}

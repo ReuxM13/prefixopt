@@ -1,6 +1,8 @@
 """
-Вкладка проверки вхождения адреса или подсети в список.
+Check tab: determine whether a given IP or prefix is covered by any network in
+a source list, listing the containing networks.
 """
+
 
 import logging
 from pathlib import Path
@@ -26,28 +28,28 @@ logger = logging.getLogger("prefixopt.gui.tab.check")
 
 
 class CheckTab(BaseOperationTab):
-    """Вкладка проверки вхождения адреса в список."""
+
+    """Look up whether a target IP/prefix is covered by a source list."""
 
     def __init__(self) -> None:
-        """Инициализирует вкладку и создает элементы интерфейса."""
+        """Set up the widget, build its UI and wire up signals."""
         super().__init__()
         self._init_ui()
 
     @property
     def _error_display_widget(self) -> SplitOutputPanel:
-        """Возвращает split_output для отображения ошибок."""
         return self.split_output
 
     def _on_error_cleanup(self) -> None:
-        """Очищает область вывода после ошибки."""
+        """Handle the error cleanup event."""
         self.split_output.set_output_text("")
 
     def get_split_output_panel(self):
-        """Возвращает split_output для вкладок с двойной панелью."""
+        """Return the SplitOutputPanel used for errors/reports."""
         return self.split_output
 
     def _init_ui(self) -> None:
-        """Создает структуру вкладки."""
+        """Construct and lay out all child widgets for this tab."""
         desc = QLabel(
             "Check whether an IP address or subnet is contained "
             "in the source list."
@@ -91,12 +93,6 @@ class CheckTab(BaseOperationTab):
         self._update_state()
 
     def _is_dark_theme(self) -> bool:
-        """
-        Определяет активную тему по яркости фона палитры.
-
-        Returns:
-            True для тёмной темы.
-        """
         bg = self.palette().color(QPalette.ColorRole.Window)
         luminance = (
             0.299 * bg.redF()
@@ -106,15 +102,6 @@ class CheckTab(BaseOperationTab):
         return luminance < 0.5
 
     def _build_found_html(self, result: CheckResult) -> str:
-        """
-        Формирует HTML-отчёт для успешного результата поиска.
-
-        Args:
-            result: Результат проверки.
-
-        Returns:
-            HTML-строка отчёта.
-        """
         dark = self._is_dark_theme()
 
         if dark:
@@ -156,15 +143,6 @@ class CheckTab(BaseOperationTab):
         return "".join(parts)
 
     def _build_not_found_html(self, result: CheckResult) -> str:
-        """
-        Формирует HTML-отчёт для отрицательного результата поиска.
-
-        Args:
-            result: Результат проверки.
-
-        Returns:
-            HTML-строка отчёта.
-        """
         dark = self._is_dark_theme()
         color_not = "#f44747" if dark else "#cb2431"
         color_bg = "#1e1e1e" if dark else "#ffffff"
@@ -182,14 +160,14 @@ class CheckTab(BaseOperationTab):
         )
 
     def _update_state(self, _: Any = None) -> None:
-        """Обновляет доступность кнопки запуска."""
+        """Enable/disable the Run button based on current input validity."""
         self.run_button.setEnabled(
             self.target_input.get_value() is not None
             and self.source_input.get_data_source() is not None
         )
 
     def _run_check(self) -> None:
-        """Собирает параметры и запускает проверку в фоновом потоке."""
+        """Collect options and launch the background worker."""
         target = self.target_input.get_value()
         source = self.source_input.get_data_source()
         if target is None or source is None:
@@ -201,12 +179,7 @@ class CheckTab(BaseOperationTab):
         self._start_worker(worker, "Checking...")
 
     def _on_check_result(self, result: CheckResult) -> None:
-        """
-        Отображает результат проверки.
-
-        Args:
-            result: Результат с информацией о вхождении.
-        """
+        """Handle the check result event."""
         self._expand_output()
 
         if result.found:
@@ -225,28 +198,18 @@ class CheckTab(BaseOperationTab):
             self.progress_panel.set_status("Not found")
 
     def trigger_open(self) -> None:
-        """Открывает диалог выбора файла."""
+        """Programmatically open a file for this tab (used by Ctrl+O)."""
         self.source_input.browse_button.click()
 
     def trigger_run(self) -> None:
-        """Запускает проверку."""
+        """Programmatically run this tab's operation (used by Ctrl+R)."""
         if self.run_button.isEnabled():
             self.run_button.click()
 
     def save_settings(self) -> dict:
-        """
-        Сохраняет параметры вкладки.
-
-        Returns:
-            Словарь с настройками.
-        """
+        """Serialise this tab's widget state for persistence."""
         return {}
 
     def load_settings(self, state: dict) -> None:
-        """
-        Восстанавливает параметры вкладки.
-
-        Args:
-            state: Словарь с настройками.
-        """
+        """Restore widget state previously saved by save_settings."""
         pass

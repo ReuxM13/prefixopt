@@ -1,11 +1,9 @@
 """
-Вкладка поиска пересечений между списками префиксов.
-
-Поддерживает три режима работы:
-- 1 источник — поиск внутренних пересечений (self-intersect);
-- 2 источника — попарное сравнение с покрытием;
-- 3+ источников — матрица присутствия с попарным анализом.
+Intersect tab: analyses overlaps within one source or across multiple sources.
+Dynamically adds/removes source panels; produces HTML reports with coverage
+metrics and a presence matrix for 3+ sources.
 """
+
 
 from typing import Any, List, Tuple
 from .. import LOG_DIR
@@ -37,15 +35,6 @@ logger = logging.getLogger("prefixopt.gui.tab.intersect")
 
 
 def _build_report_css(dark: bool) -> str:
-    """
-    Формирует CSS для отчёта пересечений, адаптированный к текущей теме.
-
-    Args:
-        dark: True для тёмной темы.
-
-    Returns:
-        CSS-строка.
-    """
     if dark:
         c = {
             "body_bg": "#1e1e1e",
@@ -140,23 +129,15 @@ def _build_report_css(dark: bool) -> str:
 
 
 def _fmt_count(count: int) -> str:
-    """
-    Форматирует число с разделителями разрядов.
-
-    Args:
-        count: Число для форматирования.
-
-    Returns:
-        Отформатированная строка.
-    """
     return f"{count:,}"
 
 
 class IntersectTab(BaseOperationTab):
-    """Вкладка поиска пересечений между списками префиксов."""
+
+    """Analyse overlaps within one list or across multiple sources."""
 
     def __init__(self) -> None:
-        """Инициализирует вкладку и создает элементы интерфейса."""
+        """Set up the widget, build its UI and wire up signals."""
         super().__init__()
         self._source_panels: list[InputPanel] = []
         self._sources: list = []
@@ -165,18 +146,19 @@ class IntersectTab(BaseOperationTab):
 
     @property
     def _error_display_widget(self) -> QWidget:
-        """Возвращает split_output для отображения ошибок."""
         return self.split_output
 
     def get_split_output_panel(self):
-        """Возвращает split_output для вкладок с двойной панелью."""
+        """Return the SplitOutputPanel used for the report/output."""
+        return self.split_output
+
 
     def _on_error_cleanup(self) -> None:
-        """Очищает область вывода после ошибки."""
+        """Handle the error cleanup event."""
         self.split_output.set_output_text("")
 
     def _init_ui(self) -> None:
-        """Создает структуру вкладки с динамическими панелями источников."""
+        """Construct and lay out all child widgets for this tab."""
         desc = QLabel(
             "Find common prefixes across multiple sources.\n"
             "1 source - self-check (internal overlaps)\n"
@@ -234,23 +216,11 @@ class IntersectTab(BaseOperationTab):
         self._update_run_state()
 
     def _is_dark_theme(self) -> bool:
-        """
-        Определяет активную тему по яркости фона палитры.
-
-        Returns:
-            True для тёмной темы.
-        """
         bg = self.palette().color(QPalette.ColorRole.Window)
         luminance = 0.299 * bg.redF() + 0.587 * bg.greenF() + 0.114 * bg.blueF()
         return luminance < 0.5
 
     def _update_panel_title(self, panel: InputPanel) -> None:
-        """
-        Обновляет заголовок панели на имя файла или порядковый номер.
-
-        Args:
-            panel: Панель ввода.
-        """
         file_name = panel.display_name()
         if file_name:
             panel.set_title(file_name)
@@ -260,7 +230,6 @@ class IntersectTab(BaseOperationTab):
         panel.set_title(f"Source {idx}")
 
     def _add_source_panel(self) -> None:
-        """Добавляет новую панель источника."""
         initial_title = f"Source {len(self._source_panels) + 1}"
         panel = InputPanel(
             title=initial_title,
@@ -276,17 +245,11 @@ class IntersectTab(BaseOperationTab):
         self._update_run_state()
 
     def _on_panel_source_changed(self, panel: InputPanel) -> None:
-        """
-        Обрабатывает изменение источника в панели.
-
-        Args:
-            panel: Панель, в которой изменился источник.
-        """
+        """Handle the panel source changed event."""
         self._update_panel_title(panel)
         self._update_run_state()
 
     def _remove_source_panel(self) -> None:
-        """Удаляет последнюю панель источника."""
         if len(self._source_panels) <= 1:
             return
 
@@ -302,11 +265,10 @@ class IntersectTab(BaseOperationTab):
         self._update_run_state()
 
     def _update_remove_button_state(self) -> None:
-        """Обновляет доступность кнопки удаления панели."""
         self.remove_btn.setEnabled(len(self._source_panels) > 1)
 
     def _update_run_state(self, _: Any = None) -> None:
-        """Обновляет доступность кнопки запуска."""
+        """Enable/disable the Run button based on current input validity."""
         if not self._source_panels:
             self.run_button.setEnabled(False)
             return
@@ -319,7 +281,7 @@ class IntersectTab(BaseOperationTab):
         self.run_button.setEnabled(True)
 
     def _run_intersect(self) -> None:
-        """Собирает параметры и запускает задачу в фоновом потоке."""
+        """Collect options and launch the background worker."""
         self._sources = []
         self._names = []
 
@@ -359,15 +321,6 @@ class IntersectTab(BaseOperationTab):
         self._start_worker(worker, "Calculating intersections...")
 
     def _build_self_intersect_html(self, report: IntersectReport) -> str:
-        """
-        Формирует HTML-отчет для режима self-intersect.
-
-        Args:
-            report: Результат анализа пересечений.
-
-        Returns:
-            HTML-строка отчета.
-        """
         css = _build_report_css(self._is_dark_theme())
         parts = [css]
         parts.append(f"<h2>Self-Intersection Report: {report.name1}</h2>")
@@ -406,15 +359,6 @@ class IntersectTab(BaseOperationTab):
         return "".join(parts)
 
     def _build_two_source_html(self, report: IntersectReport) -> str:
-        """
-        Формирует HTML-отчет для режима сравнения двух источников.
-
-        Args:
-            report: Результат анализа пересечений.
-
-        Returns:
-            HTML-строка отчета.
-        """
         css = _build_report_css(self._is_dark_theme())
         parts = [css]
         parts.append("<h2>Intersection Report</h2>")
@@ -494,18 +438,6 @@ class IntersectTab(BaseOperationTab):
         return "".join(parts)
 
     def _build_multi_html(self, report: MultiIntersectReport) -> str:
-        """
-        Формирует HTML-отчет для режима 3+ источников.
-
-        Использует предрасчитанные данные из report без повторной
-        загрузки источников.
-
-        Args:
-            report: Результат мульти-пересечения.
-
-        Returns:
-            HTML-строка отчета.
-        """
         css = _build_report_css(self._is_dark_theme())
         parts = [css]
         parts.append("<h2>Multi-Intersection Report</h2>")
@@ -538,7 +470,7 @@ class IntersectTab(BaseOperationTab):
                     if idx in indices:
                         parts.append('<td class="yes">✔</td>')
                     else:
-                        parts.append('<td class="no">—</td>')
+                        parts.append('<td class="no">-</td>')
                 parts.append("</tr>")
             parts.append("</table>")
         else:
@@ -591,12 +523,7 @@ class IntersectTab(BaseOperationTab):
         return "".join(parts)
 
     def _on_two_source_result(self, report: IntersectReport) -> None:
-        """
-        Обрабатывает результат для 1-2 источников.
-
-        Args:
-            report: Результат анализа пересечений.
-        """
+        """Handle the two source result event."""
         self._expand_output()
 
         if report.self_mode:
@@ -616,14 +543,7 @@ class IntersectTab(BaseOperationTab):
         )
 
     def _on_multi_result(self, report: MultiIntersectReport) -> None:
-        """
-        Обрабатывает результат для 3+ источников.
-
-        Рендерит HTML из предрасчитанных данных без повторной загрузки.
-
-        Args:
-            report: Результат мульти-пересечения.
-        """
+        """Handle the multi result event."""
         self._expand_output()
         self.split_output.set_report_html(self._build_multi_html(report))
         self.split_output.set_output_text(
@@ -637,7 +557,7 @@ class IntersectTab(BaseOperationTab):
         )
 
     def trigger_open(self) -> None:
-        """Открывает диалог выбора файла для первой незаполненной панели."""
+        """Programmatically open a file for this tab (used by Ctrl+O)."""
         for panel in self._source_panels:
             if panel.get_data_source() is None:
                 panel.browse_button.click()
@@ -646,28 +566,18 @@ class IntersectTab(BaseOperationTab):
             self._source_panels[0].browse_button.click()
 
     def trigger_run(self) -> None:
-        """Запускает анализ, если кнопка доступна."""
+        """Programmatically run this tab's operation (used by Ctrl+R)."""
         if self.run_button.isEnabled():
             self.run_button.click()
 
     def save_settings(self) -> dict:
-        """
-        Сохраняет параметры вкладки.
-
-        Returns:
-            Словарь с текущими настройками.
-        """
+        """Serialise this tab's widget state for persistence."""
         return {
             "strict": self.strict.isChecked(),
         }
 
     def load_settings(self, state: dict) -> None:
-        """
-        Восстанавливает параметры вкладки.
-
-        Args:
-            state: Словарь с сохраненными настройками.
-        """
+        """Restore widget state previously saved by save_settings."""
         if not state:
             return
         self.strict.setChecked(state.get("strict", False))
